@@ -46,69 +46,65 @@ void DuckPGQState::ProcessPropertyGraphs(unique_ptr<QueryResult> &property_graph
 		throw std::runtime_error("Failed to fetch property graphs or invalid result type.");
 	}
 
-	auto row_count = property_graphs->RowCount();
-	if (row_count == 0) {
-		return; // No results
-	}
+	while (auto chunk = property_graphs->Fetch()) {
+		for (idx_t i = 0; i < chunk->size(); i++) {
+			auto table = make_shared_ptr<PropertyGraphTable>();
 
-	auto chunk = property_graphs->Fetch();
-	for (idx_t i = 0; i < row_count; i++) {
-		auto table = make_shared_ptr<PropertyGraphTable>();
+			// Extract and validate common properties
+			table->table_name = Identifier(chunk->GetValue(1, i).GetValue<string>());
+			table->main_label = Identifier(chunk->GetValue(2, i).GetValue<string>());
+			table->is_vertex_table = chunk->GetValue(3, i).GetValue<bool>();
 
-		// Extract and validate common properties
-		table->table_name = Identifier(chunk->GetValue(1, i).GetValue<string>());
-		table->main_label = Identifier(chunk->GetValue(2, i).GetValue<string>());
-		table->is_vertex_table = chunk->GetValue(3, i).GetValue<bool>();
-
-		// Handle discriminator and sub-labels
-		const auto &discriminator = chunk->GetValue(10, i).GetValue<string>();
-		if (discriminator != "NULL") {
-			table->discriminator = Identifier(discriminator);
-			auto sublabels = ListValue::GetChildren(chunk->GetValue(11, i));
-			for (const auto &sublabel : sublabels) {
-				table->sub_labels.emplace_back(sublabel.GetValue<string>());
+			// Handle discriminator and sub-labels
+			const auto &discriminator = chunk->GetValue(10, i).GetValue<string>();
+			if (discriminator != "NULL") {
+				table->discriminator = Identifier(discriminator);
+				auto sublabels = ListValue::GetChildren(chunk->GetValue(11, i));
+				for (const auto &sublabel : sublabels) {
+					table->sub_labels.emplace_back(sublabel.GetValue<string>());
+				}
 			}
-		}
 
-		// Extract catalog and schema names
-		if (chunk->ColumnCount() > 12) {
-			table->catalog_name = Identifier(chunk->GetValue(12, i).GetValue<string>());
-			table->schema_name = Identifier(chunk->GetValue(13, i).GetValue<string>());
-		} else {
-			table->catalog_name = Identifier();
-			table->schema_name = Identifier::DefaultSchema();
-		}
-		if (chunk->ColumnCount() > 14) {
-			table->source_catalog = Identifier(chunk->GetValue(14, i).GetValue<string>());
-			table->source_schema = Identifier(chunk->GetValue(15, i).GetValue<string>());
-			table->destination_catalog = Identifier(chunk->GetValue(16, i).GetValue<string>());
-			table->destination_schema = Identifier(chunk->GetValue(17, i).GetValue<string>());
-		} else {
-			table->source_catalog = Identifier();
-			table->source_schema = Identifier::DefaultSchema();
-			table->destination_catalog = Identifier();
-			table->destination_schema = Identifier::DefaultSchema();
-		}
-		if (chunk->ColumnCount() > 18) {
-			// read properties
-			auto properties = ListValue::GetChildren(chunk->GetValue(18, i));
-			for (const auto &property : properties) {
-				table->column_names.emplace_back(property.GetValue<string>());
+			// Extract catalog and schema names
+			if (chunk->ColumnCount() > 12) {
+				table->catalog_name = Identifier(chunk->GetValue(12, i).GetValue<string>());
+				table->schema_name = Identifier(chunk->GetValue(13, i).GetValue<string>());
+			} else {
+				table->catalog_name = Identifier();
+				table->schema_name = Identifier::DefaultSchema();
 			}
-			auto column_aliases = ListValue::GetChildren(chunk->GetValue(19, i));
-			for (const auto &alias : column_aliases) {
-				table->column_aliases.emplace_back(alias.GetValue<string>());
+			if (chunk->ColumnCount() > 14) {
+				table->source_catalog = Identifier(chunk->GetValue(14, i).GetValue<string>());
+				table->source_schema = Identifier(chunk->GetValue(15, i).GetValue<string>());
+				table->destination_catalog = Identifier(chunk->GetValue(16, i).GetValue<string>());
+				table->destination_schema = Identifier(chunk->GetValue(17, i).GetValue<string>());
+			} else {
+				table->source_catalog = Identifier();
+				table->source_schema = Identifier::DefaultSchema();
+				table->destination_catalog = Identifier();
+				table->destination_schema = Identifier::DefaultSchema();
 			}
-		} else {
-			table->all_columns = true;
-		}
+			if (chunk->ColumnCount() > 18) {
+				// read properties
+				auto properties = ListValue::GetChildren(chunk->GetValue(18, i));
+				for (const auto &property : properties) {
+					table->column_names.emplace_back(property.GetValue<string>());
+				}
+				auto column_aliases = ListValue::GetChildren(chunk->GetValue(19, i));
+				for (const auto &alias : column_aliases) {
+					table->column_aliases.emplace_back(alias.GetValue<string>());
+				}
+			} else {
+				table->all_columns = true;
+			}
 
-		// Additional edge-specific handling
-		if (!is_vertex) {
-			PopulateEdgeSpecificFields(chunk, i, *table);
-		}
+			// Additional edge-specific handling
+			if (!is_vertex) {
+				PopulateEdgeSpecificFields(chunk, i, *table);
+			}
 
-		RegisterPropertyGraph(table, chunk->GetValue(0, i).GetValue<string>(), is_vertex);
+			RegisterPropertyGraph(table, chunk->GetValue(0, i).GetValue<string>(), is_vertex);
+		}
 	}
 }
 

@@ -402,7 +402,8 @@ void CreatePropertyGraphFunction::CreatePropertyGraphFunc(ClientContext &context
 		insert_info += "'" + e_table->table_name + "', ";
 		insert_info += "'" + e_table->main_label + "', ";
 		insert_info += "false, "; // is_vertex_table
-		insert_info += "'" + e_table->source_reference + "', ";
+		// Persist physical vertex names: table aliases only exist in the CREATE statement.
+		insert_info += "'" + e_table->source_pg_table->table_name + "', ";
 		insert_info += "[";
 		for (const auto &source_pk : e_table->source_pk) {
 			insert_info += "'" + source_pk + "', ";
@@ -414,7 +415,7 @@ void CreatePropertyGraphFunction::CreatePropertyGraphFunc(ClientContext &context
 		}
 		insert_info += "], ";
 
-		insert_info += "'" + e_table->destination_reference + "', ";
+		insert_info += "'" + e_table->destination_pg_table->table_name + "', ";
 		insert_info += "[";
 		for (const auto &destination_pk : e_table->destination_pk) {
 			insert_info += "'" + destination_pk + "', ";
@@ -438,10 +439,10 @@ void CreatePropertyGraphFunction::CreatePropertyGraphFunc(ClientContext &context
 		}
 		insert_info += "'" + e_table->catalog_name + "', ";
 		insert_info += "'" + e_table->schema_name + "', ";
-		insert_info += "'" + e_table->source_catalog + "', ";
-		insert_info += "'" + e_table->source_schema + "', ";
-		insert_info += "'" + e_table->destination_catalog + "', ";
-		insert_info += "'" + e_table->destination_schema + "', ";
+		insert_info += "'" + e_table->source_pg_table->catalog_name + "', ";
+		insert_info += "'" + e_table->source_pg_table->schema_name + "', ";
+		insert_info += "'" + e_table->destination_pg_table->catalog_name + "', ";
+		insert_info += "'" + e_table->destination_pg_table->schema_name + "', ";
 		insert_info += "["; // Start of column names
 		for (idx_t i = 0; i < e_table->column_names.size(); i++) {
 			insert_info += "'" + e_table->column_names[i] + (i == e_table->column_names.size() - 1 ? "'" : "', ");

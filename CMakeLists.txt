@@ -13,7 +13,8 @@ set(EXTENSION_NAME ${TARGET_NAME}_extension)
 set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
-include_directories(src/include)
+set(DUCKPGQ_GENERATED_INCLUDE_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
+include_directories(src/include ${DUCKPGQ_GENERATED_INCLUDE_DIR})
 add_subdirectory(src)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})

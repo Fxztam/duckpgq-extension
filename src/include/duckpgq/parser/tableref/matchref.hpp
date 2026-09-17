@@ -10,6 +10,7 @@ namespace duckdb {
 class MatchExpression : public ParsedExpression {
 public:
 	// An extension-only placeholder, not a built-in parsed or bound expression.
+	// GRAPH_TABLE grammar is not registered in the create-only migration slice.
 	static constexpr const ExpressionClass TYPE = ExpressionClass::INVALID;
 
 public:

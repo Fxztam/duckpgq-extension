@@ -8,10 +8,12 @@ namespace duckdb {
 struct CorePGQParser {
 	static void Register(ExtensionLoader &loader) {
 		RegisterPGQParserExtension(loader);
+		RegisterPGQGrammarExtension(loader);
 	}
 
 private:
 	static void RegisterPGQParserExtension(ExtensionLoader &loader);
+	static void RegisterPGQGrammarExtension(ExtensionLoader &loader);
 };
 
 struct DuckPGQParserExtensionInfo : ParserExtensionInfo {

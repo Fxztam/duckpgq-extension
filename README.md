@@ -10,6 +10,10 @@ For user documentation, examples, and background, see [duckpgq.org](https://duck
 
 DuckPGQ is a research project and a work in progress. Feedback, bug reports, and contributions are welcome.
 
+This branch is migrating SQL/PGQ to DuckDB v2.0-cyanoptera's `GrammarExtension` framework. The first slice supports
+`CREATE PROPERTY GRAPH` only; `GRAPH_TABLE`, `DROP`, `DESCRIBE`, and `SUMMARIZE PROPERTY GRAPH` still need to be ported.
+See [the grammar migration notes](docs/GRAMMAR_EXTENSION.md) for activation, supported syntax, and focused tests.
+
 ## Installation
 
 DuckPGQ is available as a DuckDB community extension:
@@ -24,6 +28,8 @@ See the [DuckPGQ community extension page](https://community-extensions.duckdb.o
 ## Quick Example
 
 ```sql
+SET active_grammar_extensions = ['duckpgq'];
+
 CREATE TABLE Person(id BIGINT, name VARCHAR);
 CREATE TABLE Person_knows_Person(person1id BIGINT, person2id BIGINT);
 
@@ -45,11 +51,7 @@ EDGE TABLES (
         LABEL Knows
 );
 
-FROM GRAPH_TABLE (
-    social
-    MATCH (a:Person)-[k:Knows]->(b:Person)
-    COLUMNS (a.name AS person, b.name AS friend)
-);
+-- Graph querying will return in a subsequent grammar migration slice.
 ```
 
 ## Building From Source
@@ -92,6 +94,8 @@ Start the locally built DuckDB shell:
 
 The extension is linked into this shell.
 
+Enable the SQL/PGQ grammar on each connection with `SET active_grammar_extensions = ['duckpgq'];`.
+
 ## Testing
 
 Run the SQL test suite:
@@ -99,6 +103,14 @@ Run the SQL test suite:
 ```sh
 make test_release
 ```
+
+During the create-only grammar migration, use the focused suite:
+
+```sh
+./build/release/test/unittest 'test/sql/grammar_extension/*'
+```
+
+The legacy suite includes syntax that has not yet been migrated, so it is not expected to pass in full on this branch.
 
 Run a single SQL logic test:
 
@@ -116,5 +128,5 @@ make tidy-check
 
 - SQL tests live in `test/sql`.
 - Extension source lives in `src`.
-- Parser/planning integration lives under `src/core/parser`; the copied PEG parser has been removed.
+- Grammar integration lives under `src/core/parser` and extends DuckDB's native grammar without a vendored parser.
 - Maintenance notes for updating DuckDB or parser dependencies are in [docs/UPDATING.md](docs/UPDATING.md).
