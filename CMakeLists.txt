@@ -14,10 +14,7 @@ set(LOADABLE_EXTENSION_NAME ${TARGET_NAME}_loadable_extension)
 
 project(${TARGET_NAME})
 include_directories(src/include)
-include_directories(BEFORE third_party/duckdb_peg_parser/upstream/src/include)
 add_subdirectory(src)
-add_subdirectory(third_party/duckdb_peg_parser)
-include_directories(../duckdb/third_party/libpg_query/include)
 
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})

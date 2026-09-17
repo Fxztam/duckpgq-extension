@@ -19,8 +19,6 @@ struct DuckPGQParserExtensionInfo : ParserExtensionInfo {
 	~DuckPGQParserExtensionInfo() override = default;
 };
 
-ParserOverrideResult duckpgq_parser_override(ParserExtensionInfo *info, const string &query, ParserOptions &options);
-
 ParserExtensionPlanResult duckpgq_plan(ParserExtensionInfo *info, ClientContext &,
                                        unique_ptr<ParserExtensionParseData>);
 
@@ -32,7 +30,6 @@ void duckpgq_find_match_function(TableRef *table_ref, DuckPGQState &duckpgq_stat
 
 struct DuckPGQParserExtension : ParserExtension {
 	DuckPGQParserExtension() : ParserExtension() {
-		parser_override = duckpgq_parser_override;
 		plan_function = duckpgq_plan;
 		parser_info = make_shared_ptr<DuckPGQParserExtensionInfo>();
 	}

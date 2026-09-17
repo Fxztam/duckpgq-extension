@@ -116,5 +116,5 @@ make tidy-check
 
 - SQL tests live in `test/sql`.
 - Extension source lives in `src`.
-- Parser integration lives partly under `third_party/duckdb_peg_parser`.
+- Parser/planning integration lives under `src/core/parser`; the copied PEG parser has been removed.
 - Maintenance notes for updating DuckDB or parser dependencies are in [docs/UPDATING.md](docs/UPDATING.md).
