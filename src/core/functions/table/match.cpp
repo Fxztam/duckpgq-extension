@@ -194,7 +194,7 @@ static bool PGQNormalizeStructExtract(unique_ptr<ParsedExpression> &expression,
 	if (alias_map.find(alias) == alias_map.end()) {
 		return false;
 	}
-	auto &field = children[1]->Cast<ConstantExpression>().GetValue();
+	auto field = children[1]->Cast<ConstantExpression>().GetLiteral().ToValue();
 	expression = PGQColumnRef(alias, field.GetValue<string>(), true);
 	return true;
 }
@@ -799,7 +799,7 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 			auto path_len_children = vector<unique_ptr<ParsedExpression>>();
 			path_len_children.push_back(std::move(shortest_path_function));
 			auto path_len = make_uniq<FunctionExpression>("len", std::move(path_len_children));
-			auto constant_two = make_uniq<ConstantExpression>(Value::INTEGER(2));
+			auto constant_two = ConstantExpression::Integer(2);
 			vector<unique_ptr<ParsedExpression>> div_children;
 			div_children.push_back(std::move(path_len));
 			div_children.push_back(std::move(constant_two));
@@ -816,12 +816,12 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 			list_slice_children.push_back(std::move(shortest_path_function));
 
 			if (parsed_ref->FunctionName() == "vertices") {
-				list_slice_children.push_back(make_uniq<ConstantExpression>(Value::INTEGER(1)));
+				list_slice_children.push_back(ConstantExpression::Integer(1));
 			} else {
-				list_slice_children.push_back(make_uniq<ConstantExpression>(Value::INTEGER(2)));
+				list_slice_children.push_back(ConstantExpression::Integer(2));
 			}
-			auto slice_end = make_uniq<ConstantExpression>(Value::INTEGER(-1));
-			auto slice_step = make_uniq<ConstantExpression>(Value::INTEGER(2));
+			auto slice_end = ConstantExpression::Integer(-1);
+			auto slice_step = ConstantExpression::Integer(2);
 
 			list_slice_children.push_back(std::move(slice_end));
 			list_slice_children.push_back(std::move(slice_step));

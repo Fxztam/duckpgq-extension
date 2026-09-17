@@ -9,10 +9,11 @@ namespace duckdb {
 
 class MatchExpression : public ParsedExpression {
 public:
-	static constexpr const ExpressionClass TYPE = ExpressionClass::BOUND_EXPRESSION;
+	// An extension-only placeholder, not a built-in parsed or bound expression.
+	static constexpr const ExpressionClass TYPE = ExpressionClass::INVALID;
 
 public:
-	MatchExpression() : ParsedExpression(ExpressionType::FUNCTION_REF, ExpressionClass::BOUND_EXPRESSION) {
+	MatchExpression() : ParsedExpression(ExpressionType::FUNCTION_REF, TYPE) {
 	}
 
 	string pg_name;

@@ -205,7 +205,7 @@ void CreatePropertyGraphFunction::ValidatePrimaryKeyInTable(ClientContext &conte
 unique_ptr<FunctionData> CreatePropertyGraphFunction::CreatePropertyGraphBind(ClientContext &context,
                                                                               TableFunctionBindInput &input,
                                                                               vector<LogicalType> &return_types,
-                                                                              vector<string> &names) {
+                                                                              vector<Identifier> &names) {
 	names.emplace_back("Success");
 	return_types.emplace_back(LogicalType::BOOLEAN);
 	auto duckpgq_state = GetDuckPGQState(context);
@@ -339,8 +339,7 @@ void CreatePropertyGraphFunction::CreatePropertyGraphFunc(ClientContext &context
 	if (retrieve_query->HasError()) {
 		throw TransactionException(retrieve_query->GetError());
 	}
-	auto &query_result = retrieve_query->Cast<MaterializedQueryResult>();
-	if (query_result.RowCount() > 0) {
+	if (retrieve_query->RowCount() > 0) {
 		if (pg_info->on_conflict == OnCreateConflict::ERROR_ON_CONFLICT) {
 			throw Exception(ExceptionType::INVALID,
 			                "Property graph " + pg_info->property_graph_name + " is already registered");

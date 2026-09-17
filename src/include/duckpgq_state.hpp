@@ -19,7 +19,7 @@ public:
 	CSR *GetCSR(int32_t id);
 
 	void RetrievePropertyGraphs(const shared_ptr<Connection> &context);
-	void ProcessPropertyGraphs(unique_ptr<MaterializedQueryResult> &property_graphs, bool is_vertex);
+	void ProcessPropertyGraphs(unique_ptr<QueryResult> &property_graphs, bool is_vertex);
 	void PopulateEdgeSpecificFields(unique_ptr<DataChunk> &chunk, idx_t row_idx, PropertyGraphTable &table);
 	static void ExtractListValues(const Value &list_value, vector<Identifier> &output);
 	void RegisterPropertyGraph(const shared_ptr<PropertyGraphTable> &table, const string &graph_name, bool is_vertex);

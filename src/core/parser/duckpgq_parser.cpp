@@ -142,7 +142,7 @@ void duckpgq_find_match_function(TableRef *table_ref, DuckPGQState &duckpgq_stat
 		int32_t match_index = duckpgq_state.match_index++;
 		duckpgq_state.transform_expression[match_index] = std::move(arguments[0].GetExpressionMutable());
 		arguments.pop_back();
-		auto function_identifier = make_uniq<ConstantExpression>(Value::CreateValue(match_index));
+		auto function_identifier = ConstantExpression::Integer(match_index);
 		arguments.emplace_back(std::move(function_identifier));
 	} else if (auto join_ref = dynamic_cast<JoinRef *>(table_ref)) {
 		// Handle JoinRef case

@@ -41,18 +41,17 @@ void DuckPGQState::RetrievePropertyGraphs(const shared_ptr<Connection> &connecti
 	ProcessPropertyGraphs(edge_property_graphs, false);
 }
 
-void DuckPGQState::ProcessPropertyGraphs(unique_ptr<MaterializedQueryResult> &property_graphs, bool is_vertex) {
-	if (!property_graphs || property_graphs->type != QueryResultType::MATERIALIZED_RESULT) {
+void DuckPGQState::ProcessPropertyGraphs(unique_ptr<QueryResult> &property_graphs, bool is_vertex) {
+	if (!property_graphs || property_graphs->HasError()) {
 		throw std::runtime_error("Failed to fetch property graphs or invalid result type.");
 	}
 
-	auto &materialized_result = property_graphs->Cast<MaterializedQueryResult>();
-	auto row_count = materialized_result.RowCount();
+	auto row_count = property_graphs->RowCount();
 	if (row_count == 0) {
 		return; // No results
 	}
 
-	auto chunk = materialized_result.Fetch();
+	auto chunk = property_graphs->Fetch();
 	for (idx_t i = 0; i < row_count; i++) {
 		auto table = make_shared_ptr<PropertyGraphTable>();
 
