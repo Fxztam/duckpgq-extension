@@ -2,9 +2,10 @@
         "dependencies": [
                 "openssl"
         ],
-        "vcpkg-configuration": {
-                "overlay-ports": [
-                        "./extension-ci-tools/vcpkg_ports"
-                ]
-        }
+	"vcpkg-configuration": {
+		"overlay-ports": [
+			"./extension-ci-tools/vcpkg_ports"
+		]
+	},
+	"builtin-baseline": "ea1a7396b05637a53bf23c078647ecc0edee4b80"
 }
