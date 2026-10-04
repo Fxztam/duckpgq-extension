@@ -1,3 +1,4 @@
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/ast/add_column_entry.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/ast/column_constraint_entry.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
@@ -8,7 +9,9 @@
 #include "duckdb/parser/parsed_data/alter_database_info.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
+#if __has_include("duckdb/parser/query_node/update_query_node.hpp")
 #include "duckdb/parser/query_node/update_query_node.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -37,7 +40,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAlterStatement(PEGTrans
 	    TransformAndMaterializeAlter(alter_entry_data,
 	                                 make_uniq<AddColumnInfo>(add_column.GetAlterEntryData(), std::move(null_column),
 	                                                          add_column.if_column_not_exists),
-	                                 column_entry.GetName().GetIdentifierName(), column_entry.DefaultValue().Copy())));
+	                                 Identifier(column_entry.GetName()).GetIdentifierName(), column_entry.DefaultValue().Copy())));
 }
 
 unique_ptr<AlterInfo>
@@ -49,7 +52,7 @@ PEGTransformerFactory::TransformAlterTableStmt(PEGTransformer &transformer, cons
 	}
 	auto result = std::move(alter_table_options[0]);
 	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
-	result->SetQualifiedName(base_table_name->GetQualifiedName());
+	duckpgq_compat::SetAlterName(*result, *base_table_name);
 
 	return std::move(result);
 }
@@ -61,7 +64,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterDatabaseStmt(PEGTrans
 	OnEntryNotFound not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	auto catalog_name = identifier;
 	auto new_name = identifier_1;
-	auto result = make_uniq<RenameDatabaseInfo>(catalog_name, new_name, not_found);
+	auto result = make_uniq<RenameDatabaseInfo>(duckpgq_compat::HostName(catalog_name), duckpgq_compat::HostName(new_name), not_found);
 	return std::move(result);
 }
 
@@ -71,7 +74,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterViewStmt(PEGTransform
                                                                     unique_ptr<AlterTableInfo> rename_alter) {
 	auto rename_table = unique_ptr_cast<AlterTableInfo, RenameTableInfo>(std::move(rename_alter));
 	auto result = make_uniq<RenameViewInfo>(AlterEntryData(), rename_table->new_table_name);
-	result->SetQualifiedName(base_table_name->GetQualifiedName());
+	duckpgq_compat::SetAlterName(*result, *base_table_name);
 	result->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return std::move(result);
 }
@@ -87,7 +90,7 @@ unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceStmt(PEGTrans
                                                                         const optional<bool> &if_exists,
                                                                         const QualifiedName &qualified_sequence_name,
                                                                         unique_ptr<AlterInfo> alter_sequence_options) {
-	alter_sequence_options->SetQualifiedName(qualified_sequence_name);
+	duckpgq_compat::SetAlterName(*alter_sequence_options, qualified_sequence_name);
 	alter_sequence_options->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	return alter_sequence_options;
 }
@@ -106,7 +109,7 @@ QualifiedName PEGTransformerFactory::TransformQualifiedSequenceName(PEGTransform
 	if (schema_qualification) {
 		schema_path.push_back(*schema_qualification);
 	}
-	return QualifiedName(std::move(schema_path), sequence_name);
+	return duckpgq_compat::MakeQualifiedName(std::move(schema_path), sequence_name);
 }
 
 unique_ptr<AlterInfo> PEGTransformerFactory::TransformAlterSequenceOptions(PEGTransformer &transformer,
@@ -129,11 +132,17 @@ PEGTransformerFactory::TransformSetSequenceOption(PEGTransformer &transformer,
 			}
 			has_owned = true;
 			auto owned_by = unique_ptr_cast<SequenceOption, QualifiedSequenceOption>(std::move(seq_option.second));
+#if __has_include("duckdb/common/identifier.hpp")
 			auto schema = owned_by->qualified_name.Schema().empty() ? Identifier::DefaultSchema()
 			                                                        : owned_by->qualified_name.Schema();
 			owned_info =
 			    make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "", schema,
 			                                   owned_by->qualified_name.Name(), OnEntryNotFound::THROW_EXCEPTION);
+#else
+			const auto &name = owned_by->qualified_name;
+			owned_info = make_uniq<ChangeOwnershipInfo>(CatalogType::SEQUENCE_ENTRY, "", "", "",
+			    name.schema.empty() ? DEFAULT_SCHEMA : name.schema, name.name, OnEntryNotFound::THROW_EXCEPTION);
+#endif
 		}
 	}
 	if (owned_info) {
@@ -154,11 +163,15 @@ void PEGTransformerFactory::AddUpdateToMultiStatement(const unique_ptr<MultiStat
                                                       const string &column_name, const AlterEntryData &table_data,
                                                       const unique_ptr<ParsedExpression> &original_expression) {
 	auto update_statement = make_uniq<UpdateStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto &node = *update_statement->node;
+#else
+	auto &node = *update_statement;
+#endif
 	node.prioritize_table_when_binding = true;
 
 	auto table_ref = make_uniq<BaseTableRef>();
-	table_ref->SetQualifiedName(table_data.GetQualifiedName());
+	duckpgq_compat::SetAlterTable(*table_ref, table_data);
 	node.table = std::move(table_ref);
 
 	auto set_info = make_uniq<UpdateSetInfo>();
@@ -196,7 +209,7 @@ unique_ptr<MultiStatement> PEGTransformerFactory::TransformAndMaterializeAlter(
 	// 3. `ALTER TABLE t ALTER u SET DEFAULT <expression>;`
 	// Reinstate the original default expression.
 	AddToMultiStatement(multi_statement,
-	                    make_uniq<SetDefaultInfo>(data, Identifier(column_name), std::move(expression)));
+	                    make_uniq<SetDefaultInfo>(data, duckpgq_compat::HostName(Identifier(column_name)), std::move(expression)));
 
 	return multi_statement;
 }
@@ -205,7 +218,7 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
                                                                      const bool &has_result,
                                                                      const optional<bool> &if_not_exists,
                                                                      AddColumnEntry add_column_entry) {
-	auto column_definition = ColumnDefinition(add_column_entry.column_path.back(), add_column_entry.type);
+	auto column_definition = ColumnDefinition(duckpgq_compat::HostName(add_column_entry.column_path.back()), add_column_entry.type);
 	if (add_column_entry.default_value) {
 		column_definition.SetDefaultValue(std::move(add_column_entry.default_value));
 	}
@@ -219,7 +232,7 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformAddColumn(PEGTransfor
 		const auto parent_path =
 		    vector<Identifier>(add_column_entry.column_path.begin(), add_column_entry.column_path.end() - 1);
 		result =
-		    make_uniq<AddFieldInfo>(AlterEntryData(), parent_path, std::move(column_definition), if_not_exists_value);
+		    make_uniq<AddFieldInfo>(AlterEntryData(), duckpgq_compat::HostNames(parent_path), std::move(column_definition), if_not_exists_value);
 	}
 	return result;
 }
@@ -259,13 +272,13 @@ unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformDropColumn(
     unique_ptr<ColumnRefExpression> nested_column_name, const optional<bool> &drop_behavior) {
 	auto if_exists_value = if_exists.has_value();
 	auto drop_behavior_value = drop_behavior ? *drop_behavior : false;
-	if (nested_column_name->ColumnNames().size() == 1) {
+	if (duckpgq_compat::ColumnNames(*nested_column_name).size() == 1) {
 		auto result =
-		    make_uniq<RemoveColumnInfo>(AlterEntryData(), nested_column_name->ColumnNames()[0].GetIdentifierName(),
+		    make_uniq<RemoveColumnInfo>(AlterEntryData(), Identifier(duckpgq_compat::ColumnNames(*nested_column_name)[0]).GetIdentifierName(),
 		                                if_exists_value, drop_behavior_value);
 		return std::move(result);
 	}
-	auto result = make_uniq<RemoveFieldInfo>(AlterEntryData(), nested_column_name->ColumnNames(), if_exists_value,
+	auto result = make_uniq<RemoveFieldInfo>(AlterEntryData(), duckpgq_compat::ColumnNames(*nested_column_name), if_exists_value,
 	                                         drop_behavior_value);
 	return std::move(result);
 }
@@ -277,19 +290,19 @@ PEGTransformerFactory::TransformAlterColumn(PEGTransformer &transformer, const b
 	if (alter_column_entry->alter_table_type == AlterTableType::SET_DEFAULT) {
 		auto set_default_entry = unique_ptr_cast<AlterTableInfo, SetDefaultInfo>(std::move(alter_column_entry));
 		// TODO(Dtenwolde) Figure out with nested names;
-		set_default_entry->column_name = nested_column_name->ColumnNames()[0];
+		set_default_entry->column_name = duckpgq_compat::ColumnNames(*nested_column_name)[0];
 		return std::move(set_default_entry);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::DROP_NOT_NULL) {
 		auto drop_not_null = unique_ptr_cast<AlterTableInfo, DropNotNullInfo>(std::move(alter_column_entry));
-		drop_not_null->column_name = nested_column_name->ColumnNames()[0];
+		drop_not_null->column_name = duckpgq_compat::ColumnNames(*nested_column_name)[0];
 		return std::move(drop_not_null);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::SET_NOT_NULL) {
 		auto set_not_null = unique_ptr_cast<AlterTableInfo, SetNotNullInfo>(std::move(alter_column_entry));
-		set_not_null->column_name = nested_column_name->ColumnNames()[0];
+		set_not_null->column_name = duckpgq_compat::ColumnNames(*nested_column_name)[0];
 		return std::move(set_not_null);
 	} else if (alter_column_entry->alter_table_type == AlterTableType::ALTER_COLUMN_TYPE) {
 		auto change_column_type = unique_ptr_cast<AlterTableInfo, ChangeColumnTypeInfo>(std::move(alter_column_entry));
-		change_column_type->column_name = nested_column_name->ColumnNames()[0];
+		change_column_type->column_name = duckpgq_compat::ColumnNames(*nested_column_name)[0];
 		if (!change_column_type->expression) {
 			change_column_type->expression =
 			    make_uniq<CastExpression>(change_column_type->target_type, std::move(nested_column_name));
@@ -342,17 +355,17 @@ unique_ptr<AlterTableInfo>
 PEGTransformerFactory::TransformRenameColumn(PEGTransformer &transformer, const bool &has_result,
                                              unique_ptr<ColumnRefExpression> nested_column_name,
                                              const Identifier &identifier) {
-	if (nested_column_name->ColumnNames().size() == 1) {
-		auto result = make_uniq<RenameColumnInfo>(AlterEntryData(), nested_column_name->ColumnNames()[0], identifier);
+	if (duckpgq_compat::ColumnNames(*nested_column_name).size() == 1) {
+		auto result = make_uniq<RenameColumnInfo>(AlterEntryData(), duckpgq_compat::ColumnNames(*nested_column_name)[0], duckpgq_compat::HostName(identifier));
 		return std::move(result);
 	}
-	auto result = make_uniq<RenameFieldInfo>(AlterEntryData(), nested_column_name->ColumnNames(), identifier);
+	auto result = make_uniq<RenameFieldInfo>(AlterEntryData(), duckpgq_compat::ColumnNames(*nested_column_name), duckpgq_compat::HostName(identifier));
 	return std::move(result);
 }
 
 unique_ptr<AlterTableInfo> PEGTransformerFactory::TransformRenameAlter(PEGTransformer &transformer,
                                                                        const Identifier &identifier) {
-	return make_uniq<RenameTableInfo>(AlterEntryData(), identifier);
+	return make_uniq<RenameTableInfo>(AlterEntryData(), duckpgq_compat::HostName(identifier));
 }
 
 unique_ptr<AlterTableInfo>
@@ -392,20 +405,24 @@ PEGTransformerFactory::TransformSetOptions(PEGTransformer &transformer,
 unique_ptr<AlterTableInfo>
 PEGTransformerFactory::TransformResetOptions(PEGTransformer &transformer,
                                              case_insensitive_map_t<unique_ptr<ParsedExpression>> rel_option_list) {
+	#if __has_include("duckdb/common/identifier.hpp")
 	identifier_set_t option_names;
+#else
+	case_insensitive_set_t option_names;
+#endif
 	for (auto &opt : rel_option_list) {
 		if (!opt.second) {
-			option_names.insert(Identifier(opt.first));
+			option_names.insert(duckpgq_compat::HostName(Identifier(opt.first)));
 			continue;
 		}
 		if (opt.second->GetExpressionClass() != ExpressionClass::CONSTANT) {
 			throw ParserException("Reset option \"%s\" cannot set any value. Did you mean to use SET?", opt.first);
 		}
 		auto &const_expr = opt.second->Cast<ConstantExpression>();
-		if (!const_expr.GetValue().IsNull()) {
+		if (!duckpgq_compat::ConstantValue(const_expr).IsNull()) {
 			throw ParserException("Reset option \"%s\" cannot set any value. Did you mean to use SET?", opt.first);
 		}
-		option_names.insert(Identifier(opt.first));
+		option_names.insert(duckpgq_compat::HostName(Identifier(opt.first)));
 	}
 	return make_uniq<ResetTableOptionsInfo>(AlterEntryData(), std::move(option_names));
 }
@@ -417,7 +434,7 @@ unique_ptr<ColumnRefExpression> PEGTransformerFactory::TransformNestedColumnName
 		column_names = *identifier_dot;
 	}
 	column_names.push_back(column_name);
-	return make_uniq<ColumnRefExpression>(column_names);
+	return make_uniq<ColumnRefExpression>(duckpgq_compat::HostNames(column_names));
 }
 
 Identifier PEGTransformerFactory::TransformIdentifierDot(PEGTransformer &transformer, const Identifier &identifier) {

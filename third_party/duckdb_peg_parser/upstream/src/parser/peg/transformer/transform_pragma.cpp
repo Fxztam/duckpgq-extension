@@ -16,7 +16,11 @@ PEGTransformerFactory::TransformPragmaAssign(PEGTransformer &transformer, const 
 	// Rule: PragmaAssign <- SettingName '=' Expression
 	auto result = make_uniq<PragmaStatement>();
 	auto &info = *result->info;
+#if __has_include("duckdb/common/identifier.hpp")
 	info.name = setting_name;
+#else
+	info.name = setting_name.GetIdentifierName();
+#endif
 	if (variable_list.size() != 1) {
 		throw ParserException("PRAGMA statement with assignment should contain exactly one parameter");
 	}
@@ -35,7 +39,11 @@ PEGTransformerFactory::TransformPragmaAssign(PEGTransformer &transformer, const 
 	// "PRAGMA table_info='integers'"
 	// "PRAGMA table_info('integers')"
 	// for compatibility, any pragmas that match the SQLite ones are parsed as calls
+#if __has_include("duckdb/common/identifier.hpp")
 	identifier_set_t sqlite_compat_pragmas {"table_info"};
+#else
+	case_insensitive_set_t sqlite_compat_pragmas {"table_info"};
+#endif
 	if (sqlite_compat_pragmas.find(info.name) != sqlite_compat_pragmas.end()) {
 		return std::move(result);
 	}
@@ -48,18 +56,30 @@ PEGTransformerFactory::TransformPragmaFunction(PEGTransformer &transformer, cons
                                                optional<vector<unique_ptr<ParsedExpression>>> pragma_parameters) {
 	// Rule: PragmaFunction <- PragmaName PragmaParameters?
 	auto result = make_uniq<PragmaStatement>();
+#if __has_include("duckdb/common/identifier.hpp")
 	result->info->name = pragma_name;
+#else
+	result->info->name = pragma_name.GetIdentifierName();
+#endif
 	if (!pragma_parameters) {
 		return std::move(result);
 	}
 	for (auto &parameter : *pragma_parameters) {
 		if (parameter->GetExpressionType() == ExpressionType::COMPARE_EQUAL) {
 			auto &comp = parameter->Cast<ComparisonExpression>();
+#if __has_include("duckdb/common/identifier.hpp")
 			if (comp.Left().GetExpressionType() != ExpressionType::COLUMN_REF) {
 				throw ParserException("Named parameter requires a column reference on the LHS");
 			}
 			auto &columnref = comp.Left().Cast<ColumnRefExpression>();
 			result->info->named_parameters.insert(make_pair(columnref.GetName(), std::move(comp.RightMutable())));
+#else
+			if (comp.left->GetExpressionType() != ExpressionType::COLUMN_REF) {
+				throw ParserException("Named parameter requires a column reference on the LHS");
+			}
+			auto &columnref = comp.left->Cast<ColumnRefExpression>();
+			result->info->named_parameters.insert(make_pair(columnref.GetColumnName(), std::move(comp.right)));
+#endif
 		} else if (parameter->GetExpressionType() == ExpressionType::COLUMN_REF) {
 			auto &colref = parameter->Cast<ColumnRefExpression>();
 			if (!colref.IsQualified()) {

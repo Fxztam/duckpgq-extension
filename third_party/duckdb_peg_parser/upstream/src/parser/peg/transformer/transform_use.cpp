@@ -1,3 +1,4 @@
+#include "duckpgq/compat/name_metadata.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/sql_statement.hpp"
 
@@ -7,12 +8,7 @@ namespace duckpgq_peg {
 // UseStatement <- 'USE' UseTarget
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformUseStatement(PEGTransformer &transformer,
                                                                       const QualifiedName &use_target) {
-	string value_str;
-	if (IsInvalidSchema(use_target.Schema())) {
-		value_str = SQLIdentifier::ToString(use_target.Name().GetIdentifierName());
-	} else {
-		value_str = SQLIdentifier(use_target.Schema()) + "." + SQLIdentifier(use_target.Name());
-	}
+	auto value_str = duckpgq_compat::UseTargetText(use_target);
 
 	auto value_expr = make_uniq<ConstantExpression>(Value(value_str));
 	return make_uniq<SetVariableStatement>("schema", std::move(value_expr), SetScope::AUTOMATIC);
@@ -22,14 +18,14 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformUseStatement(PEGTransfo
 QualifiedName PEGTransformerFactory::TransformSchemaNameAsUseTarget(PEGTransformer &transformer,
                                                                     const Identifier &schema_name) {
 	QualifiedName result;
-	result = QualifiedName(schema_name);
+	result = duckpgq_compat::MakeQualifiedName(schema_name);
 	return result;
 }
 
 QualifiedName PEGTransformerFactory::TransformCatalogNameAsUseTarget(PEGTransformer &transformer,
                                                                      const Identifier &catalog_name) {
 	QualifiedName result;
-	result = QualifiedName(catalog_name);
+	result = duckpgq_compat::MakeQualifiedName(catalog_name);
 	return result;
 }
 
@@ -41,7 +37,7 @@ PEGTransformerFactory::TransformUseTargetCatalogSchema(PEGTransformer &transform
 	if (dot_identifier && !dot_identifier->empty()) {
 		throw ParserException("Expected \"USE database\" or \"USE database.schema\"");
 	}
-	QualifiedName result({catalog_name}, reserved_schema_name);
+	auto result = duckpgq_compat::MakeQualifiedName({catalog_name}, reserved_schema_name);
 	return result;
 }
 

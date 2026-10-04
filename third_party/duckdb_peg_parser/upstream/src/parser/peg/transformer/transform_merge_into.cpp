@@ -1,7 +1,9 @@
 #include "duckdb/common/set.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/merge_into_statement.hpp"
+#if __has_include("duckdb/parser/query_node/merge_query_node.hpp")
 #include "duckdb/parser/query_node/merge_query_node.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -12,7 +14,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformMergeIntoStatement(
     JoinQualifier join_qualifier, vector<pair<MergeActionCondition, unique_ptr<MergeIntoAction>>> merge_match,
     optional<vector<unique_ptr<ParsedExpression>>> returning_clause) {
 	auto result = make_uniq<MergeIntoStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto &node = *result->node;
+#else
+	auto &node = *result;
+#endif
 	if (with_clause) {
 		node.cte_map = std::move(*with_clause);
 	}
@@ -21,7 +27,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformMergeIntoStatement(
 	if (join_qualifier.on_clause) {
 		node.join_condition = std::move(join_qualifier.on_clause);
 	} else {
-		node.using_columns = join_qualifier.using_columns;
+		#if __has_include("duckdb/common/identifier.hpp")
+	node.using_columns = join_qualifier.using_columns;
+#else
+	node.using_columns = IdentifiersToStrings(join_qualifier.using_columns);
+#endif
 	}
 
 	set<MergeActionCondition> unconditional_actions;
@@ -31,7 +41,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformMergeIntoStatement(
 		// Once an unconditional clause has been seen for a condition type, no further clauses
 		// of the same type are allowed: they would be unreachable.
 		if (unconditional_actions.count(action_condition)) {
-			string action_condition_str = MergeQueryNode::ActionConditionToString(action_condition);
+			#if __has_include("duckdb/common/identifier.hpp")
+	string action_condition_str = MergeQueryNode::ActionConditionToString(action_condition);
+#else
+	string action_condition_str = MergeIntoStatement::ActionConditionToString(action_condition);
+#endif
 			throw ParserException(
 			    "Unconditional %s clause was already defined - any following %s clause would be unreachable",
 			    action_condition_str, action_condition_str);
@@ -128,7 +142,11 @@ PEGTransformerFactory::TransformInsertValuesList(PEGTransformer &transformer,
                                                  vector<unique_ptr<ParsedExpression>> expression) {
 	auto result = make_uniq<MergeIntoAction>();
 	if (insert_column_list) {
-		result->insert_columns = StringsToIdentifiers(*insert_column_list);
+		#if __has_include("duckdb/common/identifier.hpp")
+	result->insert_columns = StringsToIdentifiers(*insert_column_list);
+#else
+	result->insert_columns = *insert_column_list;
+#endif
 	}
 	result->expressions = std::move(expression);
 	return result;

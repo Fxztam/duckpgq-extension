@@ -1,5 +1,8 @@
+#include "duckpgq/compat/function_access.hpp"
 #include "duckdb/parser/expression/function_expression.hpp"
+#if __has_include("duckdb/parser/query_node/update_query_node.hpp")
 #include "duckdb/parser/query_node/update_query_node.hpp"
+#endif
 #include "duckdb/parser/statement/update_statement.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
@@ -12,7 +15,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformUpdateStatement(
     optional<unique_ptr<ParsedExpression>> where_clause,
     optional<vector<unique_ptr<ParsedExpression>>> returning_clause) {
 	auto result = make_uniq<UpdateStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto &node = *result->node;
+#else
+	auto &node = *result;
+#endif
 	if (with_clause) {
 		node.cte_map = std::move(*with_clause);
 	}
@@ -39,7 +46,11 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformBaseTableAliasSet(PEGTransf
                                                                        unique_ptr<BaseTableRef> base_table_name,
                                                                        const optional<Identifier> &update_alias) {
 	if (update_alias) {
+		#if __has_include("duckdb/common/identifier.hpp")
 		base_table_name->alias = *update_alias;
+#else
+		base_table_name->alias = update_alias->GetIdentifierName();
+#endif
 	}
 	return std::move(base_table_name);
 }
@@ -53,24 +64,28 @@ unique_ptr<UpdateSetInfo> PEGTransformerFactory::TransformUpdateSetTuple(PEGTran
                                                                          const vector<Identifier> &column_name,
                                                                          unique_ptr<ParsedExpression> expression) {
 	auto result = make_uniq<UpdateSetInfo>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	result->columns = column_name;
+#else
+	result->columns = IdentifiersToStrings(column_name);
+#endif
 
 	bool is_row_assignment = false;
 	if (expression->GetExpressionClass() == ExpressionClass::FUNCTION) {
 		auto &func_ref = expression->Cast<FunctionExpression>();
-		if (func_ref.FunctionName() == "row") {
+		if (duckpgq_compat::FunctionName(func_ref) == "row") {
 			is_row_assignment = true;
 		}
 	}
 
 	if (is_row_assignment) {
 		auto &func_expr = expression->Cast<FunctionExpression>();
-		if (func_expr.GetArguments().size() != result->columns.size()) {
+		if (duckpgq_compat::Arguments(func_expr).size() != result->columns.size()) {
 			throw ParserException("Could not perform assignment, expected %d values, got %d", result->columns.size(),
-			                      func_expr.GetArguments().size());
+			                      duckpgq_compat::Arguments(func_expr).size());
 		}
-		for (auto &arg : func_expr.GetArgumentsMutable()) {
-			result->expressions.push_back(std::move(arg.GetExpressionMutable()));
+		for (auto &arg : duckpgq_compat::Arguments(func_expr)) {
+			result->expressions.push_back(std::move(duckpgq_compat::Expression(arg)));
 		}
 	} else {
 		result->expressions.reserve(result->columns.size());

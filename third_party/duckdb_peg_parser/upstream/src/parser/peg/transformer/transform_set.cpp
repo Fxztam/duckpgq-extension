@@ -5,13 +5,24 @@
 namespace duckdb {
 namespace duckpgq_peg {
 
+// Canonical DuckDB 1.5.5 statements take plain strings; the fork takes Identifier.
+#if __has_include("duckdb/common/identifier.hpp")
+static const Identifier &SettingName(const Identifier &name) {
+	return name;
+}
+#else
+static string SettingName(const Identifier &name) {
+	return name.GetIdentifierName();
+}
+#endif
+
 // ResetStatement <- 'RESET' SetVariableOrSetting
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformResetStatement(PEGTransformer &transformer,
                                                                         const SettingInfo &set_variable_or_setting) {
 	if (set_variable_or_setting.scope == SetScope::LOCAL) {
 		throw NotImplementedException("RESET LOCAL is not implemented.");
 	}
-	return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+	return make_uniq<ResetVariableStatement>(SettingName(set_variable_or_setting.name), set_variable_or_setting.scope);
 }
 
 // SetAssignment <- VariableAssign VariableList
@@ -59,7 +70,11 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformZoneStringLiteral(P
 // ZoneIdentifier <- Identifier
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformZoneIdentifier(PEGTransformer &transformer,
                                                                             const Identifier &identifier) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return make_uniq<ConstantExpression>(Value(identifier));
+#else
+	return make_uniq<ConstantExpression>(Value(identifier.GetIdentifierName()));
+#endif
 }
 
 // SetTimeZone <- 'TIME' 'ZONE' ZoneValue
@@ -97,9 +112,9 @@ PEGTransformerFactory::TransformStandardAssignment(PEGTransformer &transformer,
 		auto &col_ref = value->Cast<ColumnRefExpression>();
 		value = make_uniq<ConstantExpression>(col_ref.GetColumnName());
 	} else if (value->GetExpressionClass() == ExpressionClass::DEFAULT) {
-		return make_uniq<ResetVariableStatement>(set_variable_or_setting.name, set_variable_or_setting.scope);
+		return make_uniq<ResetVariableStatement>(SettingName(set_variable_or_setting.name), set_variable_or_setting.scope);
 	}
-	return make_uniq<SetVariableStatement>(set_variable_or_setting.name, std::move(value),
+	return make_uniq<SetVariableStatement>(SettingName(set_variable_or_setting.name), std::move(value),
 	                                       set_variable_or_setting.scope);
 }
 

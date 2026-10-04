@@ -2,10 +2,12 @@
 #include "duckdb/parser/statement/explain_statement.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
+#include "duckpgq/compat/function_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
 
+#if __has_include("duckdb/common/identifier.hpp")
 ProfilerPrintFormat ParseProfilerPrintFormat(const Value &val) {
 	if (val.type().id() != LogicalTypeId::VARCHAR) {
 		throw InvalidInputException("Expected a string as argument to FORMAT");
@@ -13,6 +15,22 @@ ProfilerPrintFormat ParseProfilerPrintFormat(const Value &val) {
 	// the format name is validated when the renderer is created (needs a ClientContext); only normalize it here
 	return ProfilerPrintFormat(StringUtil::Lower(val.GetValue<string>()));
 }
+#else
+static ExplainFormat ParseProfilerPrintFormat(const Value &val) {
+	if (val.type().id() != LogicalTypeId::VARCHAR) {
+		throw InvalidInputException("Expected a string as argument to FORMAT");
+	}
+	const auto name = StringUtil::Lower(val.GetValue<string>());
+	if (name == "default") return ExplainFormat::DEFAULT;
+	if (name == "text") return ExplainFormat::TEXT;
+	if (name == "json") return ExplainFormat::JSON;
+	if (name == "html") return ExplainFormat::HTML;
+	if (name == "graphviz") return ExplainFormat::GRAPHVIZ;
+	if (name == "yaml") return ExplainFormat::YAML;
+	if (name == "mermaid") return ExplainFormat::MERMAID;
+	throw InvalidInputException("\"%s\" is not a valid FORMAT argument, valid options are: default, text, json, html, graphviz, yaml, mermaid", name);
+}
+#endif
 
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformExplainStatement(PEGTransformer &transformer, const optional<bool> &explain_analyze,
@@ -20,11 +38,22 @@ PEGTransformerFactory::TransformExplainStatement(PEGTransformer &transformer, co
                                                  unique_ptr<SQLStatement> explainable_statements) {
 	auto explain_type = explain_analyze ? ExplainType::EXPLAIN_ANALYZE : ExplainType::EXPLAIN_STANDARD;
 	bool format_is_set = false;
+#if __has_include("duckdb/common/identifier.hpp")
 	auto format = ProfilerPrintFormat::Default();
+#else
+	auto format = ExplainFormat::DEFAULT;
+#endif
 	if (explain_option_list) {
 		for (auto option : *explain_option_list) {
 			auto option_name = StringUtil::Lower(option.name.GetIdentifierName());
 			if (option_name == "format") {
+				if (option.expression || option.children.size() > 1) {
+					throw InvalidInputException("Expected a single constant as argument to FORMAT");
+				}
+				// Canonical EXPLAIN ignores a FORMAT option without an argument.
+				if (option.children.empty()) {
+					continue;
+				}
 				if (format_is_set) {
 					throw InvalidInputException("FORMAT can not be provided more than once");
 				}
@@ -67,7 +96,7 @@ GenericCopyOption PEGTransformerFactory::TransformExplainOption(PEGTransformer &
 	}
 	auto &expr = *expression;
 	if (expr->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-		copy_option.children.push_back(Value(expr->Cast<ConstantExpression>().GetValue()));
+		copy_option.children.push_back(Value(duckpgq_compat::ConstantValue(expr->Cast<ConstantExpression>())));
 	} else if (expr->GetExpressionType() == ExpressionType::COLUMN_REF) {
 		copy_option.children.push_back(Value(expr->Cast<ColumnRefExpression>().GetColumnName()));
 	} else {

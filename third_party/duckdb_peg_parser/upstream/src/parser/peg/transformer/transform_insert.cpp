@@ -2,7 +2,9 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/ast/on_conflict_expression_target.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
+#if __has_include("duckdb/parser/query_node/insert_query_node.hpp")
 #include "duckdb/parser/query_node/insert_query_node.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -14,14 +16,28 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformInsertStatement(
     InsertValues insert_values, optional<unique_ptr<OnConflictInfo>> on_conflict_clause,
     optional<vector<unique_ptr<ParsedExpression>>> returning_clause) {
 	auto result = make_uniq<InsertStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto &node = *result->node;
+#else
+	auto &node = *result;
+#endif
 	if (with_clause) {
 		node.cte_map = std::move(*with_clause);
 	}
+	#if __has_include("duckdb/common/identifier.hpp")
 	node.qualified_name = insert_target->GetQualifiedName();
+#else
+	node.catalog = insert_target->catalog_name;
+	node.schema = insert_target->schema_name;
+	node.table = insert_target->table_name;
+#endif
 	node.column_order = by_name_or_position ? *by_name_or_position : InsertColumnOrder::INSERT_BY_POSITION;
 	if (insert_column_list) {
-		node.columns = StringsToIdentifiers(*insert_column_list);
+		#if __has_include("duckdb/common/identifier.hpp")
+	node.columns = StringsToIdentifiers(*insert_column_list);
+#else
+	node.columns = *insert_column_list;
+#endif
 	}
 	if (!node.columns.empty() && insert_values.default_values) {
 		throw ParserException(
@@ -66,7 +82,11 @@ unique_ptr<BaseTableRef> PEGTransformerFactory::TransformInsertTarget(PEGTransfo
                                                                       unique_ptr<BaseTableRef> base_table_name,
                                                                       const optional<Identifier> &insert_alias) {
 	if (insert_alias) {
-		base_table_name->alias = *insert_alias;
+		#if __has_include("duckdb/common/identifier.hpp")
+	base_table_name->alias = *insert_alias;
+#else
+	base_table_name->alias = insert_alias->GetIdentifierName();
+#endif
 	}
 	return base_table_name;
 }
@@ -80,7 +100,11 @@ PEGTransformerFactory::TransformOnConflictClause(PEGTransformer &transformer,
                                                  optional<OnConflictExpressionTarget> on_conflict_target,
                                                  unique_ptr<OnConflictInfo> on_conflict_action) {
 	if (on_conflict_target) {
-		on_conflict_action->indexed_columns = on_conflict_target->indexed_columns;
+		#if __has_include("duckdb/common/identifier.hpp")
+	on_conflict_action->indexed_columns = on_conflict_target->indexed_columns;
+#else
+	on_conflict_action->indexed_columns = IdentifiersToStrings(on_conflict_target->indexed_columns);
+#endif
 		if (on_conflict_target->where_clause) {
 			on_conflict_action->condition = std::move(on_conflict_target->where_clause);
 		}

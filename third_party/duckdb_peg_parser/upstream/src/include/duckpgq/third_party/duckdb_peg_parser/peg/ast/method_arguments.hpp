@@ -1,6 +1,7 @@
 #pragma once
 
 #include "duckdb/parser/expression/function_expression.hpp"
+#include "duckpgq/compat/function_argument.hpp"
 #include "duckdb/parser/result_modifier.hpp"
 
 namespace duckdb {

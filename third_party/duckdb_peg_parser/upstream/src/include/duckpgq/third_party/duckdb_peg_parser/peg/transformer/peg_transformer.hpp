@@ -42,7 +42,7 @@
 #include "duckdb/parser/expression/function_expression.hpp"
 #include "duckdb/parser/expression/parameter_expression.hpp"
 #include "duckdb/parser/expression/window_expression.hpp"
-#include "duckdb/parser/parsed_data/connect_info.hpp"
+#include "duckpgq/compat/unsupported_statement.hpp"
 #include "duckdb/parser/parsed_data/create_type_info.hpp"
 #include "duckdb/parser/parsed_data/transaction_info.hpp"
 #include "duckdb/parser/parsed_data/vacuum_info.hpp"
@@ -67,6 +67,10 @@
 namespace duckdb {
 using std::optional;
 namespace duckpgq_peg {
+#if !__has_include("duckdb/common/identifier.hpp")
+// Canonical GroupingSet contains idx_t; the newer fork uses a typed index.
+using ProjectionIndex = idx_t;
+#endif
 
 // Forward declare
 using duckdb::QualifiedName;

@@ -12,11 +12,19 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCheckpointStatement(PEG
 	auto result = make_uniq<CallStatement>();
 	vector<unique_ptr<ParsedExpression>> children;
 	auto function = make_uniq<FunctionExpression>(checkpoint_name, std::move(children));
+#if __has_include("duckdb/common/identifier.hpp")
 	function->SetQualifiedName(
 	    QualifiedName(Identifier(SYSTEM_CATALOG), Identifier(DEFAULT_SCHEMA), function->GetQualifiedName().Name()));
 	if (catalog_name) {
 		function->GetArgumentsMutable().emplace_back(make_uniq<ConstantExpression>(*catalog_name));
 	}
+#else
+	function->catalog = SYSTEM_CATALOG;
+	function->schema = DEFAULT_SCHEMA;
+	if (catalog_name) {
+		function->children.push_back(make_uniq<ConstantExpression>(Value(catalog_name->GetIdentifierName())));
+	}
+#endif
 	result->function = std::move(function);
 	return std::move(result);
 }

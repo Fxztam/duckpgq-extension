@@ -1,4 +1,5 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
+#include "duckpgq/compat/name_metadata.hpp"
 
 #include "duckdb/common/enum_util.hpp"
 #include "duckdb/parser/statement/multi_statement.hpp"
@@ -222,7 +223,8 @@ unique_ptr<SQLStatement> PEGTransformer::GenerateCreateEnumStmt(unique_ptr<Creat
 	auto info = make_uniq<CreateTypeInfo>();
 	info->temporary = true;
 	info->internal = false;
-	info->SetQualifiedName(QualifiedName(Identifier(std::move(entry->enum_name))));
+	duckpgq_compat::SetTypeQualifiedName(*info,
+	    duckpgq_compat::MakeQualifiedName(Identifier(std::move(entry->enum_name))));
 	info->on_conflict = OnCreateConflict::REPLACE_ON_CONFLICT;
 
 	// generate the query that will result in the enum creation
@@ -310,7 +312,7 @@ bool PEGTransformer::IsWindowFrameDefault(WindowBoundary start, WindowBoundary e
 unique_ptr<WindowExpression> PEGTransformer::GetWindowClause(const Identifier &window_name) {
 	auto it = window_clauses.find(window_name);
 	if (it == window_clauses.end()) {
-		throw ParserException("window \"%s\" does not exist", window_name);
+		throw ParserException("window \"%s\" does not exist", window_name.GetIdentifierName());
 	}
 	return unique_ptr_cast<ParsedExpression, WindowExpression>(it->second->Copy());
 }

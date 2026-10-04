@@ -1,4 +1,5 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
+#if __has_include("duckdb/parser/parsed_data/create_trigger_info.hpp")
 #include "duckdb/parser/parsed_data/create_trigger_info.hpp"
 #include "duckdb/parser/statement/insert_statement.hpp"
 #include "duckdb/parser/statement/update_statement.hpp"
@@ -8,10 +9,12 @@
 #include "duckdb/parser/query_node/update_query_node.hpp"
 #include "duckdb/parser/query_node/delete_query_node.hpp"
 #include "duckdb/parser/query_node/merge_query_node.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
 
+#if __has_include("duckdb/parser/parsed_data/create_trigger_info.hpp")
 static unique_ptr<QueryNode> ExtractQueryNode(unique_ptr<SQLStatement> stmt) {
 	switch (stmt->type) {
 	case StatementType::INSERT_STATEMENT:
@@ -27,11 +30,13 @@ static unique_ptr<QueryNode> ExtractQueryNode(unique_ptr<SQLStatement> stmt) {
 	}
 }
 
+#endif
 unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const Identifier &trigger_name,
     const TriggerTiming &trigger_timing, const TriggerEventInfo &trigger_event,
     unique_ptr<BaseTableRef> base_table_name, const optional<TriggerTableReferencingInfo> &referencing_clause,
     const optional<TriggerForEach> &for_each_clause, unique_ptr<SQLStatement> trigger_body) {
+	#if __has_include("duckdb/parser/parsed_data/create_trigger_info.hpp")
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateTriggerInfo>();
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
@@ -50,6 +55,9 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTriggerStmt(
 	info->trigger_action = ExtractQueryNode(std::move(trigger_body));
 	result->info = std::move(info);
 	return result;
+#else
+	RejectUnsupportedHostStatement("CREATE TRIGGER");
+#endif
 }
 
 Identifier PEGTransformerFactory::TransformTriggerName(PEGTransformer &transformer, const Identifier &identifier) {

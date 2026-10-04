@@ -1,3 +1,4 @@
+#include "duckpgq/compat/function_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/ast/generic_copy_option.hpp"
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/columnref_expression.hpp"
@@ -17,14 +18,14 @@ PEGTransformerFactory::TransformGenericCopyOptionList(PEGTransformer &transforme
 
 static void SetGenericCopyOptionExpression(GenericCopyOption &copy_option, unique_ptr<ParsedExpression> expression) {
 	if (expression->GetExpressionType() == ExpressionType::VALUE_CONSTANT) {
-		copy_option.children.push_back(Value(expression->Cast<ConstantExpression>().GetValue()));
+		copy_option.children.push_back(Value(duckpgq_compat::ConstantValue(expression->Cast<ConstantExpression>())));
 	} else if (expression->GetExpressionType() == ExpressionType::COLUMN_REF) {
 		copy_option.children.push_back(Value(expression->Cast<ColumnRefExpression>().GetColumnName()));
 	} else if (expression->GetExpressionType() == ExpressionType::PLACEHOLDER) {
 		auto &op_expr = expression->Cast<OperatorExpression>();
-		for (auto &child : op_expr.GetChildren()) {
+		for (auto &child : duckpgq_compat::OperatorChildren(op_expr)) {
 			if (child->GetExpressionClass() == ExpressionClass::CONSTANT) {
-				copy_option.children.push_back(Value(child->Cast<ConstantExpression>().GetValue()));
+				copy_option.children.push_back(Value(duckpgq_compat::ConstantValue(child->Cast<ConstantExpression>())));
 			} else if (child->GetExpressionClass() == ExpressionClass::COLUMN_REF) {
 				copy_option.children.push_back(Value(child->Cast<ColumnRefExpression>().GetColumnName()));
 			} else {
@@ -38,11 +39,11 @@ static void SetGenericCopyOptionExpression(GenericCopyOption &copy_option, uniqu
 		copy_option.children.push_back(Value("*"));
 	} else if (expression->GetExpressionType() == ExpressionType::OPERATOR_CAST) {
 		auto &cast_expr = expression->Cast<CastExpression>();
-		if (cast_expr.Child().GetExpressionClass() == ExpressionClass::CONSTANT) {
-			auto &const_expr = cast_expr.Child().Cast<ConstantExpression>();
-			if (const_expr.GetValue().GetValue<string>() == "t") {
+		if (duckpgq_compat::CastChild(cast_expr).GetExpressionClass() == ExpressionClass::CONSTANT) {
+			auto &const_expr = duckpgq_compat::CastChild(cast_expr).Cast<ConstantExpression>();
+			if (duckpgq_compat::ConstantValue(const_expr).GetValue<string>() == "t") {
 				copy_option.children.push_back(Value(true));
-			} else if (const_expr.GetValue().GetValue<string>() == "f") {
+			} else if (duckpgq_compat::ConstantValue(const_expr).GetValue<string>() == "f") {
 				copy_option.children.push_back(Value(false));
 			} else {
 				copy_option.expression = std::move(expression);
@@ -148,11 +149,11 @@ void PEGTransformerFactory::SplitGenericOptions(const vector<GenericCopyOption> 
 		} else if (option.children.size() == 1) {
 			if (option.children[0].IsNull()) {
 				throw BinderException("NULL is not supported as a valid option for %s option \"%s\"", statement_name,
-				                      option.name);
+				                      option.name.GetIdentifierName());
 			}
 			options[option.name.GetIdentifierName()] = option.children[0];
 		} else {
-			throw ParserException("Option %s can only have one argument", option.name);
+			throw ParserException("Option %s can only have one argument", option.name.GetIdentifierName());
 		}
 	}
 }

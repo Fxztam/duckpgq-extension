@@ -1,11 +1,14 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/ast/generic_copy_option.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
+#if __has_include("duckdb/parser/parsed_data/connect_info.hpp")
 #include "duckdb/parser/statement/connect_statement.hpp"
 #include "duckdb/parser/statement/disconnect_statement.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
 
+#if __has_include("duckdb/parser/parsed_data/connect_info.hpp")
 unique_ptr<ConnectInfo> PEGTransformerFactory::TransformLocalSessionTarget(PEGTransformer &transformer) {
 	auto result = make_uniq<ConnectInfo>();
 	result->target_is_local = true;
@@ -51,5 +54,24 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDisconnectStatement(PEG
 	return std::move(result);
 }
 
+#else
+unique_ptr<ConnectInfo> PEGTransformerFactory::TransformLocalSessionTarget(PEGTransformer &) {
+    RejectUnsupportedHostStatement("CONNECT");
+}
+unique_ptr<ConnectInfo> PEGTransformerFactory::TransformStringSessionTarget(
+    PEGTransformer &, const string &, const optional<vector<GenericCopyOption>> &) {
+    RejectUnsupportedHostStatement("CONNECT");
+}
+unique_ptr<ConnectInfo> PEGTransformerFactory::TransformCatalogSessionTarget(PEGTransformer &, const Identifier &) {
+    RejectUnsupportedHostStatement("CONNECT");
+}
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformConnectStatement(
+    PEGTransformer &, optional<unique_ptr<ConnectInfo>>) {
+    RejectUnsupportedHostStatement("CONNECT");
+}
+unique_ptr<SQLStatement> PEGTransformerFactory::TransformDisconnectStatement(PEGTransformer &) {
+    RejectUnsupportedHostStatement("DISCONNECT");
+}
+#endif
 } // namespace duckpgq_peg
 } // namespace duckdb

@@ -11,7 +11,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDetachStatement(PEGTran
 	auto result = make_uniq<DetachStatement>();
 	auto info = make_uniq<DetachInfo>();
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+#if __has_include("duckdb/common/identifier.hpp")
 	info->name = catalog_name;
+#else
+	info->name = catalog_name.GetIdentifierName();
+#endif
 	result->info = std::move(info);
 	return std::move(result);
 }

@@ -3,6 +3,7 @@
 #include "duckdb/parser/parsed_data/create_macro_info.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/function/scalar_macro_function.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -12,7 +13,13 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateMacroStmt(
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateMacroInfo>(CatalogType::MACRO_ENTRY);
 
+#if __has_include("duckdb/common/identifier.hpp")
 	info->SetQualifiedName(qualified_name);
+#else
+	info->catalog = qualified_name.catalog;
+	info->schema = qualified_name.schema;
+	info->name = qualified_name.name;
+#endif
 
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	for (auto &macro_function : macro_definition) {
@@ -49,18 +56,18 @@ PEGTransformerFactory::TransformMacroDefinition(PEGTransformer &transformer,
 		return macro_definition_body;
 	}
 	bool default_value_found = false;
-	identifier_set_t parameter_names;
+	case_insensitive_string_set_t parameter_names;
 	for (auto &parameter : *macro_parameters) {
 		D_ASSERT(!parameter.name.empty());
-		if (parameter_names.find(parameter.name) != parameter_names.end()) {
+		if (parameter_names.find(parameter.name.GetIdentifierName()) != parameter_names.end()) {
 			throw ParserException("Duplicate parameter '%s' in macro definition", parameter.name.GetIdentifierName());
 		}
-		parameter_names.insert(parameter.name);
+		parameter_names.insert(parameter.name.GetIdentifierName());
 		if (parameter.is_default) {
 			auto default_expr = std::move(parameter.expression);
-			default_expr->SetAlias(parameter.name);
-			macro_definition_body->default_parameters[parameter.name] = std::move(default_expr);
-			macro_definition_body->parameters.push_back(make_uniq<ColumnRefExpression>(parameter.name));
+			default_expr->SetAlias(duckpgq_compat::HostName(parameter.name));
+			macro_definition_body->default_parameters[duckpgq_compat::HostName(parameter.name)] = std::move(default_expr);
+			macro_definition_body->parameters.push_back(make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(parameter.name)));
 			default_value_found = true;
 		} else {
 			if (default_value_found) {
@@ -100,7 +107,7 @@ MacroParameter PEGTransformerFactory::TransformSimpleParameter(PEGTransformer &t
                                                                const optional<LogicalType> &type) {
 	MacroParameter result;
 	result.name = Identifier(type_func_name);
-	result.expression = make_uniq<ColumnRefExpression>(Identifier(type_func_name));
+	result.expression = make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(type_func_name));
 	if (type) {
 		result.type = *type;
 	}

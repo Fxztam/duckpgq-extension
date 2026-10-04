@@ -1,4 +1,5 @@
 #include "duckdb/parser/statement/execute_statement.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
@@ -8,7 +9,7 @@ unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformExecuteStatement(PEGTransformer &transformer, const Identifier &identifier,
                                                  optional<vector<FunctionArgument>> table_function_arguments) {
 	auto result = make_uniq<ExecuteStatement>();
-	result->name = identifier;
+	result->name = duckpgq_compat::HostName(identifier);
 	if (!table_function_arguments) {
 		return std::move(result);
 	}
@@ -31,7 +32,7 @@ PEGTransformerFactory::TransformExecuteStatement(PEGTransformer &transformer, co
 			param_idx++;
 		}
 		arg.GetExpressionMutable()->ClearAlias();
-		result->named_values[param_name] = std::move(arg.GetExpressionMutable());
+		result->named_values[duckpgq_compat::HostName(param_name)] = std::move(arg.GetExpressionMutable());
 	}
 	return std::move(result);
 }

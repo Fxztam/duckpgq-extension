@@ -1,4 +1,5 @@
 #include "duckdb/parser/parsed_data/create_index_info.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
@@ -19,16 +20,23 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 	if (!index_name) {
 		throw NotImplementedException("Please provide an index name, e.g., CREATE INDEX my_name ...");
 	}
+#if __has_include("duckdb/common/identifier.hpp")
 	index_info->table = base_table_name->Table();
 	index_info->SetQualifiedName(QualifiedName(base_table_name->GetQualifiedName().Catalog(),
 	                                           base_table_name->GetQualifiedName().Schema(), *index_name));
+#else
+	index_info->table = base_table_name->table_name;
+	index_info->catalog = base_table_name->catalog_name;
+	index_info->schema = base_table_name->schema_name;
+	index_info->index_name = index_name->GetIdentifierName();
+#endif
 	index_info->index_type = index_type ? index_type->GetIdentifierName() : "ART";
 	if (insert_column_list) {
 		for (auto &column : *insert_column_list) {
 			index_info->expressions.push_back(
-			    make_uniq<ColumnRefExpression>(Identifier(column), base_table_name->Table()));
+			    make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(Identifier(column)), index_info->table));
 			index_info->parsed_expressions.push_back(
-			    make_uniq<ColumnRefExpression>(Identifier(column), base_table_name->Table()));
+			    make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(Identifier(column)), index_info->table));
 		}
 	}
 	if (index_element) {
@@ -48,7 +56,7 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateIndexStmt(
 			if (option_entry.second->GetExpressionClass() != ExpressionClass::CONSTANT) {
 				throw InvalidInputException("Create index option must be a constant value");
 			}
-			index_info->options[option_entry.first] = option_entry.second->Cast<ConstantExpression>().GetValue();
+			index_info->options[option_entry.first] = duckpgq_compat::ConstantValue(option_entry.second->Cast<ConstantExpression>());
 		}
 	}
 	result->info = std::move(index_info);

@@ -3,6 +3,7 @@
 #include "duckdb/parser/statement/select_statement.hpp"
 #include "duckdb/common/types/uuid.hpp"
 #include "duckdb/parser/expression/operator_expression.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -89,7 +90,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformPivotStatement(PEGTr
 			GroupingSet set;
 			for (idx_t gr = 0; gr < pivot_group_list.size(); gr++) {
 				auto &group = pivot_group_list[gr];
-				auto colref = make_uniq<ColumnRefExpression>(Identifier(group));
+				auto colref = make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(Identifier(group)));
 				select_node->select_list.push_back(colref->Copy());
 				select_node->groups.group_expressions.push_back(std::move(colref));
 				set.insert(ProjectionIndex(gr));
@@ -122,7 +123,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformPivotStatement(PEGTr
 		new_select->from_table = source->Copy();
 		AddPivotEntry(transformer, enum_name, std::move(new_select), col.pivot_expressions[0]->Copy(),
 		              std::move(col.subquery), has_parameters);
-		col.pivot_enum = Identifier(enum_name);
+		col.pivot_enum = duckpgq_compat::HostName(Identifier(enum_name));
 	}
 
 	// Generate the actual query, including the pivot
@@ -141,7 +142,8 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformPivotStatement(PEGTr
 		pivot_ref->aggregates.push_back(std::move(function));
 	}
 	if (pivot_group.HasResult()) {
-		pivot_ref->groups = transformer.Transform<vector<Identifier>>(pivot_group.GetResult());
+		pivot_ref->groups = duckpgq_compat::HostNames(StringsToIdentifiers(
+		    transformer.Transform<vector<string>>(pivot_group.GetResult())));
 	}
 	pivot_ref->pivots = std::move(columns);
 	select_node->from_table = std::move(pivot_ref);
@@ -229,7 +231,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformUnpivotStatement(PEG
 		new_select->from_table = source->Copy();
 		AddPivotEntry(transformer, enum_name, std::move(new_select), col.pivot_expressions[0]->Copy(),
 		              std::move(col.subquery), has_parameters);
-		col.pivot_enum = Identifier(enum_name);
+		col.pivot_enum = duckpgq_compat::HostName(Identifier(enum_name));
 	}
 
 	auto pivot_ref = make_uniq<PivotRef>();
@@ -237,7 +239,7 @@ unique_ptr<SelectStatement> PEGTransformerFactory::TransformUnpivotStatement(PEG
 	if (!unpivot_names_opt.HasResult()) {
 		pivot_ref->unpivot_names.push_back("value");
 	} else {
-		pivot_ref->unpivot_names = name_and_values.unpivot_names;
+		pivot_ref->unpivot_names = duckpgq_compat::HostNames(name_and_values.unpivot_names);
 	}
 
 	auto result = make_uniq<SelectStatement>();
@@ -254,7 +256,7 @@ UnpivotNameValues PEGTransformerFactory::TransformIntoNameValues(PEGTransformer 
                                                                  const vector<Identifier> &identifier) {
 	UnpivotNameValues result;
 	PivotColumn column;
-	column.unpivot_names.push_back(Identifier(col_id_or_string));
+	column.unpivot_names.push_back(duckpgq_compat::HostName(col_id_or_string));
 	result.column = std::move(column);
 	result.unpivot_names = identifier;
 	return result;

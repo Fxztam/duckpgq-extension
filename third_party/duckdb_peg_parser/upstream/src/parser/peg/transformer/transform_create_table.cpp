@@ -18,9 +18,24 @@
 #include "duckdb/parser/expression/cast_expression.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/catalog/default/default_types.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
+static auto TableObjectName(const QualifiedName &name) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return name.Name();
+#else
+	return name.name;
+#endif
+}
+static string TableNameText(const QualifiedName &name) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA);
+#else
+	return name.ToString();
+#endif
+}
 
 unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformCreateStatement(PEGTransformer &transformer, const optional<bool> &or_replace,
@@ -58,10 +73,14 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateTableStmt(
     PEGTransformer &transformer, const optional<bool> &if_not_exists, const QualifiedName &qualified_name,
     CreateTableDefinition create_table_definition, const optional<bool> &commit_action) {
 	auto result = make_uniq<CreateStatement>();
-	if (qualified_name.Name().empty()) {
+	if (TableObjectName(qualified_name).empty()) {
 		throw ParserException("Empty table name not supported");
 	}
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto info = make_uniq<CreateTableInfo>(qualified_name);
+#else
+	auto info = make_uniq<CreateTableInfo>(qualified_name.catalog, qualified_name.schema, qualified_name.name);
+#endif
 
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	info->query = std::move(create_table_definition.select_statement);
@@ -107,7 +126,7 @@ ColumnList PEGTransformerFactory::TransformIdentifierList(PEGTransformer &transf
                                                           const vector<Identifier> &identifier) {
 	ColumnList result;
 	for (auto &name : identifier) {
-		result.AddColumn(ColumnDefinition(name, LogicalType::UNKNOWN));
+		result.AddColumn(ColumnDefinition(duckpgq_compat::HostName(name), LogicalType::UNKNOWN));
 	}
 	return result;
 }
@@ -153,10 +172,10 @@ PEGTransformerFactory::TransformCreateTableColumnList(PEGTransformer &transforme
 			}
 			for (auto constraint_type : column_result.constraint_types) {
 				if (constraint_type.second == ConstraintType::NOT_NULL) {
-					result.constraints.push_back(make_uniq<NotNullConstraint>(LogicalIndex(col_idx)));
+					result.constraints.push_back(make_uniq<NotNullConstraint>(LogicalIndex(result.columns.LogicalColumnCount())));
 				} else if (constraint_type.second == ConstraintType::UNIQUE) {
 					result.constraints.push_back(make_uniq<UniqueConstraint>(
-					    LogicalIndex(col_idx), column_result.column_definition.GetName(), constraint_type.first));
+					    LogicalIndex(result.columns.LogicalColumnCount()), column_result.column_definition.GetName(), constraint_type.first));
 				}
 			}
 			result.columns.AddColumn(std::move(column_result.column_definition));
@@ -185,7 +204,7 @@ PEGTransformerFactory::TransformCreateTableConstraint(PEGTransformer &transforme
 
 QualifiedName PEGTransformerFactory::TransformIdentifierOrStringLiteral(PEGTransformer &transformer,
                                                                         const string &child) {
-	return QualifiedName(Identifier(child));
+	return duckpgq_compat::MakeQualifiedName(Identifier(child));
 }
 
 string PEGTransformerFactory::TransformColLabelOrString(PEGTransformer &transformer, ParseResult &parse_result) {
@@ -228,7 +247,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 	bool has_generated = generated_column && generated_column->expr != nullptr;
 	if (!has_type && !has_generated) {
 		throw ParserException("Column %s must have a type or be defined as a GENERATED column.",
-		                      qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA));
+		                      TableNameText(qualified_name));
 	}
 	auto column_type = has_type ? *type : LogicalType::ANY;
 	CompressionType compression_type = CompressionType::COMPRESSION_AUTO;
@@ -253,7 +272,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 				}
 			} else if (cc_entry.constraint_name == "ForeignKeyConstraint") {
 				auto &fk_constraint = cc_entry.constraint->Cast<ForeignKeyConstraint>();
-				fk_constraint.fk_columns.push_back(qualified_name.Name());
+				fk_constraint.fk_columns.push_back(TableObjectName(qualified_name));
 				accumulated_constraints.constraints.push_back(std::move(cc_entry.constraint));
 			} else if (cc_entry.constraint_name == "ColumnCollation") {
 				if (has_generated) {
@@ -261,7 +280,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 				}
 				if (column_type.id() == LogicalTypeId::ANY) {
 					throw ParserException("Specify the VARCHAR type for column \"%s\" with collation.",
-					                      qualified_name.ToString(QualifiedNameToStringMode::HIDE_DEFAULT_SCHEMA));
+					                      TableNameText(qualified_name));
 				} else if (column_type.IsUnbound()) {
 					auto &expr = UnboundType::GetTypeExpression(column_type);
 					if (expr->GetExpressionClass() != ExpressionClass::TYPE) {
@@ -277,7 +296,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 				vector<unique_ptr<ParsedExpression>> type_children;
 				type_children.push_back(std::move(cc_entry.expression));
 				column_type =
-				    LogicalType::UNBOUND(make_uniq<TypeExpression>(Identifier("VARCHAR"), std::move(type_children)));
+				    LogicalType::UNBOUND(make_uniq<TypeExpression>(duckpgq_compat::HostName(Identifier("VARCHAR")), std::move(type_children)));
 			} else {
 				accumulated_constraints.constraints.push_back(std::move(cc_entry.constraint));
 			}
@@ -287,17 +306,17 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		auto generated = std::move(*generated_column);
 		if (generated.expr->HasSubquery()) {
 			throw ParserException("Expression of generated column \"%s\" contains a subquery, which isn't allowed",
-			                      qualified_name.Name());
+			                      TableObjectName(qualified_name));
 		}
 		if (column_type != LogicalType::ANY) {
 			generated.expr = make_uniq<CastExpression>(column_type, std::move(generated.expr));
 		}
 		if (generated.expr->HasSubquery()) {
 			throw ParserException("Expression of generated column \"%s\" contains a subquery, which isn't allowed",
-			                      qualified_name.Name());
+			                      TableObjectName(qualified_name));
 		}
 
-		ColumnDefinition col(qualified_name.Name(), column_type, std::move(generated.expr), TableColumnType::GENERATED);
+		ColumnDefinition col(TableObjectName(qualified_name), column_type, std::move(generated.expr), TableColumnType::GENERATED);
 		col.SetCompressionType(compression_type);
 		if (accumulated_constraints.default_value) {
 			throw ParserException("Not allowed to set default on a generated column");
@@ -307,7 +326,7 @@ ConstraintColumnDefinition PEGTransformerFactory::TransformColumnDefinition(
 		return result;
 	}
 
-	ColumnDefinition col(qualified_name.Name(), column_type);
+	ColumnDefinition col(TableObjectName(qualified_name), column_type);
 
 	if (accumulated_constraints.default_value) {
 		col.SetDefaultValue(std::move(accumulated_constraints.default_value));
@@ -353,13 +372,13 @@ unique_ptr<Constraint> PEGTransformerFactory::TransformTopLevelConstraintList(PE
 
 unique_ptr<Constraint> PEGTransformerFactory::TransformTopPrimaryKeyConstraint(PEGTransformer &transformer,
                                                                                const vector<string> &column_id_list) {
-	auto result = make_uniq<UniqueConstraint>(StringsToIdentifiers(column_id_list), true);
+	auto result = make_uniq<UniqueConstraint>(duckpgq_compat::HostNames(StringsToIdentifiers(column_id_list)), true);
 	return std::move(result);
 }
 
 unique_ptr<Constraint> PEGTransformerFactory::TransformTopUniqueConstraint(PEGTransformer &transformer,
                                                                            const vector<string> &column_id_list) {
-	return make_uniq<UniqueConstraint>(StringsToIdentifiers(column_id_list), false);
+	return make_uniq<UniqueConstraint>(duckpgq_compat::HostNames(StringsToIdentifiers(column_id_list)), false);
 }
 
 ColumnConstraintEntry PEGTransformerFactory::TransformCheckConstraint(PEGTransformer &transformer,
@@ -376,7 +395,7 @@ ColumnConstraintEntry PEGTransformerFactory::TransformCheckConstraint(PEGTransfo
 unique_ptr<Constraint> PEGTransformerFactory::TransformTopForeignKeyConstraint(
     PEGTransformer &transformer, const vector<string> &column_id_list, ColumnConstraintEntry foreign_key_constraint) {
 	auto &fk_constraint = foreign_key_constraint.constraint->Cast<ForeignKeyConstraint>();
-	fk_constraint.fk_columns = StringsToIdentifiers(column_id_list);
+	fk_constraint.fk_columns = duckpgq_compat::HostNames(StringsToIdentifiers(column_id_list));
 	if (!fk_constraint.pk_columns.empty() && fk_constraint.fk_columns.size() != fk_constraint.pk_columns.size()) {
 		throw ParserException("The number of referencing and referenced columns for foreign keys must be the same");
 	}
@@ -402,8 +421,13 @@ ColumnConstraintEntry PEGTransformerFactory::TransformForeignKeyConstraint(PEGTr
                                                                            const optional<vector<string>> &column_list,
                                                                            const KeyActions &key_actions) {
 	ForeignKeyInfo fk_info;
+	#if __has_include("duckdb/common/identifier.hpp")
 	fk_info.schema = base_table_name->GetQualifiedName().Schema();
 	fk_info.table = base_table_name->Table();
+#else
+	fk_info.schema = base_table_name->schema_name;
+	fk_info.table = base_table_name->table_name;
+#endif
 	fk_info.type = ForeignKeyType::FK_TYPE_FOREIGN_KEY_TABLE;
 
 	ColumnConstraintEntry entry;
@@ -412,7 +436,7 @@ ColumnConstraintEntry PEGTransformerFactory::TransformForeignKeyConstraint(PEGTr
 	if (column_list) {
 		columns = StringsToIdentifiers(*column_list);
 	}
-	entry.constraint = make_uniq<ForeignKeyConstraint>(columns, vector<Identifier>(), fk_info);
+	entry.constraint = make_uniq<ForeignKeyConstraint>(duckpgq_compat::HostNames(columns), duckpgq_compat::HostNames(vector<Identifier>()), fk_info);
 	return entry;
 }
 

@@ -1,9 +1,25 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/parsed_data/extra_drop_info.hpp"
 #include "duckdb/parser/tableref/basetableref.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
+static void DropName(DropInfo &info, const QualifiedName &name) {
+#if __has_include("duckdb/common/identifier.hpp")
+	info.SetQualifiedName(name);
+#else
+	info.catalog = name.catalog; info.schema = name.schema; info.name = name.name;
+#endif
+}
+static void DropName(DropInfo &info, const BaseTableRef &table) {
+#if __has_include("duckdb/common/identifier.hpp")
+	info.SetQualifiedName(table.GetQualifiedName());
+#else
+	info.catalog = table.catalog_name; info.schema = table.schema_name; info.name = table.table_name;
+#endif
+}
+
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformDropStatement(PEGTransformer &transformer,
                                                                        unique_ptr<DropStatement> drop_entries,
@@ -20,11 +36,11 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTable(PEGTransform
                                                                     vector<unique_ptr<BaseTableRef>> base_table_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (base_table_name.size() > 1) {
+	if (base_table_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
 	auto base_table = std::move(base_table_name[0]);
-	info->SetQualifiedName(base_table->GetQualifiedName());
+	DropName(*info, *base_table);
 	info->type = table_or_view;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	result->info = std::move(info);
@@ -49,10 +65,10 @@ PEGTransformerFactory::TransformDropTableFunction(PEGTransformer &transformer, c
                                                   const vector<Identifier> &table_function_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (table_function_name.size() > 1) {
+	if (table_function_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
-	info->SetQualifiedName(QualifiedName(table_function_name[0]));
+	DropName(*info, duckpgq_compat::MakeQualifiedName(table_function_name[0]));
 	info->type = comment_macro_table;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	result->info = std::move(info);
@@ -66,11 +82,11 @@ PEGTransformerFactory::TransformDropFunction(PEGTransformer &transformer, const 
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
 	auto catalog_type = CatalogType::MACRO_ENTRY;
-	if (function_identifier.size() > 1) {
+	if (function_identifier.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
 	const auto &function = function_identifier[0];
-	info->SetQualifiedName(function);
+	DropName(*info, function);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = catalog_type;
 	result->info = std::move(info);
@@ -82,12 +98,21 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSchema(PEGTransfor
                                                                      const vector<QualifiedName> &qualified_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_name.size() > 1) {
+	if (qualified_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
 	// store the full dotted path (e.g. [schema] / [parent, schema] / [catalog, parent, schema]); the leading
 	// component is resolved into a catalog + parent-schema chain during binding (see Binder::Bind(DropStatement))
-	info->SetQualifiedName(qualified_name[0]);
+	#if __has_include("duckdb/common/identifier.hpp")
+	DropName(*info, qualified_name[0]);
+#else
+	const auto &name = qualified_name[0];
+	if (!IsInvalidCatalog(name.catalog)) {
+		throw ParserException("Expected catalog.schema or schema");
+	}
+	info->catalog = name.schema;
+	info->name = name.name;
+#endif
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::SCHEMA_ENTRY;
 	result->info = std::move(info);
@@ -99,10 +124,10 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropIndex(PEGTransform
                                                                     const vector<QualifiedName> &qualified_index_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_index_name.size() > 1) {
+	if (qualified_index_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
-	info->SetQualifiedName(qualified_index_name[0]);
+	DropName(*info, qualified_index_name[0]);
 	info->type = CatalogType::INDEX_ENTRY;
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	result->info = std::move(info);
@@ -111,21 +136,21 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropIndex(PEGTransform
 
 QualifiedName PEGTransformerFactory::TransformQualifiedIndexNameString(PEGTransformer &transformer,
                                                                        const Identifier &index_name) {
-	QualifiedName result(index_name);
+	auto result = duckpgq_compat::MakeQualifiedName(index_name);
 	return result;
 }
 
 QualifiedName PEGTransformerFactory::TransformSchemaReservedIndex(PEGTransformer &transformer,
                                                                   const Identifier &schema_qualification,
                                                                   const Identifier &reserved_index_name) {
-	QualifiedName result({schema_qualification}, reserved_index_name);
+	auto result = duckpgq_compat::MakeQualifiedName({schema_qualification}, reserved_index_name);
 	return result;
 }
 
 QualifiedName PEGTransformerFactory::TransformCatalogReservedSchemaIndex(
     PEGTransformer &transformer, const Identifier &catalog_qualification,
     const Identifier &reserved_schema_qualification, const Identifier &reserved_index_name) {
-	QualifiedName result(catalog_qualification, reserved_schema_qualification, reserved_index_name);
+	auto result = duckpgq_compat::MakeQualifiedName({catalog_qualification, reserved_schema_qualification}, reserved_index_name);
 	return result;
 }
 
@@ -134,10 +159,10 @@ PEGTransformerFactory::TransformDropSequence(PEGTransformer &transformer, const 
                                              const vector<QualifiedName> &qualified_sequence_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_sequence_name.size() > 1) {
+	if (qualified_sequence_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
-	info->SetQualifiedName(qualified_sequence_name[0]);
+	DropName(*info, qualified_sequence_name[0]);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::SEQUENCE_ENTRY;
 	result->info = std::move(info);
@@ -155,7 +180,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropCollation(PEGTrans
 	/*
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (collation_name.size() > 1) {
+	if (collation_name.size() != 1) {
 	    throw NotImplementedException("Can only drop one object at a time");
 	}
 	auto collation = collation_name[0];
@@ -174,10 +199,10 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropType(PEGTransforme
                                                                    const vector<QualifiedName> &qualified_type_name) {
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
-	if (qualified_type_name.size() > 1) {
+	if (qualified_type_name.size() != 1) {
 		throw NotImplementedException("Can only drop one object at a time");
 	}
-	info->SetQualifiedName(qualified_type_name[0]);
+	DropName(*info, qualified_type_name[0]);
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
 	info->type = CatalogType::TYPE_ENTRY;
 	result->info = std::move(info);
@@ -210,7 +235,11 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropSecret(PEGTransfor
 	}
 
 	info->if_not_found = if_exists ? OnEntryNotFound::RETURN_NULL : OnEntryNotFound::THROW_EXCEPTION;
+	#if __has_include("duckdb/common/identifier.hpp")
 	info->SetName(secret_name);
+#else
+	info->name = secret_name.GetIdentifierName();
+#endif
 	if (drop_secret_storage) {
 		extra_drop_info->secret_storage = drop_secret_storage->GetIdentifierName();
 	}
@@ -228,6 +257,9 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
                                                                       const optional<bool> &if_exists,
                                                                       const Identifier &trigger_name,
                                                                       unique_ptr<BaseTableRef> base_table_name) {
+#if !__has_include("duckdb/common/identifier.hpp")
+	throw ParserException("DROP TRIGGER is not supported by canonical DuckDB 1.5.5");
+#else
 	auto result = make_uniq<DropStatement>();
 	auto info = make_uniq<DropInfo>();
 	info->type = CatalogType::TRIGGER_ENTRY;
@@ -241,6 +273,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropTrigger(PEGTransfo
 
 	result->info = std::move(info);
 	return result;
+#endif
 }
 
 } // namespace duckpgq_peg

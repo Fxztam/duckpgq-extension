@@ -24,10 +24,22 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAttachStatement(
 		info->on_conflict = OnCreateConflict::ERROR_ON_CONFLICT;
 	}
 
+#if __has_include("duckdb/common/identifier.hpp")
 	info->parsed_path = std::move(database_path);
 	if (attach_alias) {
 		info->name = Identifier(*attach_alias);
 	}
+#else
+	if (!database_path || database_path->GetExpressionClass() != ExpressionClass::CONSTANT) {
+		throw ParserException("ATTACH requires a string literal path in canonical DuckDB 1.5.5");
+	}
+	const auto &path = database_path->Cast<ConstantExpression>().value;
+	if (path.IsNull() || path.type().id() != LogicalTypeId::VARCHAR) {
+		throw ParserException("ATTACH requires a non-null string path in canonical DuckDB 1.5.5");
+	}
+	info->path = path.GetValue<string>();
+	if (attach_alias) info->name = attach_alias->GetIdentifierName();
+#endif
 	result->info = std::move(info);
 	if (!attach_options) {
 		return std::move(result);

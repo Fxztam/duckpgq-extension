@@ -10,12 +10,38 @@
 #include "duckpgq/parser/parsed_data/drop_property_graph_info.hpp"
 #include "duckpgq/parser/tableref/matchref.hpp"
 #include "duckdb/parser/tableref/table_function_ref.hpp"
+#include "duckpgq/compat/function_access.hpp"
+#include "duckpgq/compat/name_metadata.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
 
 static string PGQIdentifierName(const Identifier &identifier) {
 	return identifier.GetIdentifierName();
+}
+
+// Catalog/schema/name parts of a table name. The fork exposes Catalog()/Schema()/Name() accessors, canonical
+// DuckDB 1.5.5 plain string fields (QualifiedName) or catalog_name/schema_name/table_name (BaseTableRef).
+struct PGQNameParts {
+	Identifier catalog;
+	Identifier schema;
+	Identifier name;
+};
+
+static PGQNameParts PGQParts(const QualifiedName &qualified_name) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return {qualified_name.Catalog(), qualified_name.Schema(), qualified_name.Name()};
+#else
+	return {Identifier(qualified_name.catalog), Identifier(qualified_name.schema), Identifier(qualified_name.name)};
+#endif
+}
+
+static PGQNameParts PGQParts(const BaseTableRef &table_ref) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return PGQParts(table_ref.GetQualifiedName());
+#else
+	return {Identifier(table_ref.catalog_name), Identifier(table_ref.schema_name), Identifier(table_ref.table_name)};
+#endif
 }
 
 static vector<Identifier> PGQIdentifiers(const vector<Identifier> &identifiers) {
@@ -28,10 +54,10 @@ static vector<Identifier> PGQIdentifiers(const vector<Identifier> &identifiers) 
 }
 
 static void PGQApplyBaseTableName(PropertyGraphTable &table, const BaseTableRef &base_table_name) {
-	auto &qualified_name = base_table_name.GetQualifiedName();
-	table.catalog_name = qualified_name.Catalog();
-	table.schema_name = qualified_name.Schema();
-	table.table_name = qualified_name.Name();
+	auto parts = PGQParts(base_table_name);
+	table.catalog_name = parts.catalog;
+	table.schema_name = parts.schema;
+	table.table_name = parts.name;
 }
 
 static void PGQApplyTableAlias(PropertyGraphTable &table, const optional<TableAlias> &table_alias) {
@@ -71,16 +97,16 @@ static void PGQApplyReference(PropertyGraphTable &edge_table, PropertyGraphTable
 	if (!reference.table) {
 		return;
 	}
-	auto &qualified_name = reference.table->GetQualifiedName();
+	auto parts = PGQParts(*reference.table);
 	auto &catalog = source ? edge_table.source_catalog : edge_table.destination_catalog;
 	auto &schema = source ? edge_table.source_schema : edge_table.destination_schema;
 	auto &table = source ? edge_table.source_reference : edge_table.destination_reference;
 	auto &foreign_keys = source ? edge_table.source_fk : edge_table.destination_fk;
 	auto &primary_keys = source ? edge_table.source_pk : edge_table.destination_pk;
 
-	catalog = qualified_name.Catalog();
-	schema = qualified_name.Schema();
-	table = qualified_name.Name();
+	catalog = parts.catalog;
+	schema = parts.schema;
+	table = parts.name;
 	foreign_keys = PGQIdentifiers(reference.foreign_keys);
 	primary_keys = PGQIdentifiers(reference.primary_keys);
 }
@@ -133,10 +159,10 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreatePropertyGraphS
     vector<shared_ptr<PropertyGraphTable>> vertex_tables_clause,
     optional<vector<shared_ptr<PropertyGraphTable>>> edge_tables_clause) {
 	auto result = make_uniq<CreateStatement>();
-	if (qualified_name.Name().empty()) {
+	if (PGQParts(qualified_name).name.GetIdentifierName().empty()) {
 		throw ParserException("Empty property graph name not supported");
 	}
-	auto info = make_uniq<CreatePropertyGraphInfo>(PGQIdentifierName(qualified_name.Name()));
+	auto info = make_uniq<CreatePropertyGraphInfo>(PGQIdentifierName(PGQParts(qualified_name).name));
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
 	info->vertex_tables = std::move(vertex_tables_clause);
 	if (edge_tables_clause) {
@@ -163,7 +189,7 @@ unique_ptr<DropStatement> PEGTransformerFactory::TransformDropPropertyGraph(PEGT
                                                                             const optional<bool> &if_exists,
                                                                             const QualifiedName &qualified_name) {
 	auto result = make_uniq<DropStatement>();
-	auto info = make_uniq<DropPropertyGraphInfo>(qualified_name.Name().GetIdentifierName(), if_exists.has_value());
+	auto info = make_uniq<DropPropertyGraphInfo>(PGQParts(qualified_name).name.GetIdentifierName(), if_exists.has_value());
 	result->info = std::move(info);
 	return result;
 }
@@ -298,7 +324,7 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformGraphTableRef(
 	}
 
 	auto match_expression = make_uniq<MatchExpression>();
-	match_expression->pg_name = PGQIdentifierName(qualified_name.Name());
+	match_expression->pg_name = PGQIdentifierName(PGQParts(qualified_name).name);
 	match_expression->alias = table_alias ? table_alias->name.GetIdentifierName() : string();
 	match_expression->where_clause = std::move(where_clause).value_or(nullptr);
 	if (graph_table_columns_clause) {
@@ -310,7 +336,13 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformGraphTableRef(
 				if (!path_element || path_element->match_type != PGQMatchType::MATCH_VERTEX) {
 					continue;
 				}
-				match_expression->column_list.push_back(make_uniq<StarExpression>(Identifier(path_element->variable_binding)));
+				match_expression->column_list.push_back(make_uniq<StarExpression>(
+#if __has_include("duckdb/common/identifier.hpp")
+	Identifier(path_element->variable_binding)
+#else
+	path_element->variable_binding
+#endif
+	));
 			}
 		}
 	}
@@ -322,10 +354,15 @@ unique_ptr<TableRef> PEGTransformerFactory::TransformGraphTableRef(
 	arguments.emplace_back(std::move(match_expression));
 
 	auto result = make_uniq<TableFunctionRef>();
-	result->function = make_uniq<FunctionExpression>(Identifier("duckpgq_match"), std::move(arguments));
+	result->function = BuildFunctionExpression(duckpgq_compat::MakeQualifiedName(Identifier("duckpgq_match")), std::move(arguments));
 	if (table_alias) {
+#if __has_include("duckdb/common/identifier.hpp")
 		result->alias = table_alias->name;
 		result->column_name_alias = table_alias->column_name_alias;
+#else
+		result->alias = table_alias->name.GetIdentifierName();
+		result->column_name_alias = IdentifiersToStrings(table_alias->column_name_alias);
+#endif
 	}
 	return std::move(result);
 }
@@ -409,7 +446,7 @@ string PEGTransformerFactory::TransformGraphAnyShortestPrefix(PEGTransformer &tr
 string PEGTransformerFactory::TransformGraphTopKShortestPrefix(PEGTransformer &transformer,
                                                                unique_ptr<ParsedExpression> number_literal) {
 	auto &constant = number_literal->Cast<ConstantExpression>();
-	return "shortest " + constant.GetValue().ToString();
+	return "shortest " + duckpgq_compat::ConstantValue(constant).ToString();
 }
 
 string PEGTransformerFactory::TransformGraphWalkPathMode(PEGTransformer &transformer) {
@@ -536,7 +573,7 @@ string PEGTransformerFactory::TransformGraphQuestionQuantifier(PEGTransformer &t
 string PEGTransformerFactory::TransformGraphFixedQuantifier(PEGTransformer &transformer,
                                                             unique_ptr<ParsedExpression> number_literal) {
 	auto &constant = number_literal->Cast<ConstantExpression>();
-	return constant.GetValue().ToString();
+	return duckpgq_compat::ConstantValue(constant).ToString();
 }
 
 string PEGTransformerFactory::TransformGraphRangeQuantifier(
@@ -546,11 +583,11 @@ string PEGTransformerFactory::TransformGraphRangeQuantifier(
 	string upper_value;
 	if (number_literal) {
 		auto &lower = number_literal.value()->Cast<ConstantExpression>();
-		lower_value = lower.GetValue().ToString();
+		lower_value = duckpgq_compat::ConstantValue(lower).ToString();
 	}
 	if (number_literal_1) {
 		auto &upper = number_literal_1.value()->Cast<ConstantExpression>();
-		upper_value = upper.GetValue().ToString();
+		upper_value = duckpgq_compat::ConstantValue(upper).ToString();
 	}
 	return lower_value + "," + upper_value;
 }

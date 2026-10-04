@@ -1,6 +1,8 @@
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 #include "duckdb/parser/statement/delete_statement.hpp"
+#if __has_include("duckdb/parser/query_node/delete_query_node.hpp")
 #include "duckdb/parser/query_node/delete_query_node.hpp"
+#endif
 
 namespace duckdb {
 namespace duckpgq_peg {
@@ -11,7 +13,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDeleteStatement(
     optional<unique_ptr<ParsedExpression>> where_clause,
     optional<vector<unique_ptr<ParsedExpression>>> returning_clause) {
 	auto result = make_uniq<DeleteStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	auto &node = *result->node;
+#else
+	auto &node = *result;
+#endif
 	if (with_clause && !with_clause->map.empty()) {
 		node.cte_map = std::move(*with_clause);
 	}
@@ -33,7 +39,11 @@ unique_ptr<BaseTableRef> PEGTransformerFactory::TransformTargetOptAlias(PEGTrans
                                                                         const bool &has_result,
                                                                         const optional<Identifier> &col_id) {
 	if (col_id && !col_id->empty()) {
+		#if __has_include("duckdb/common/identifier.hpp")
 		base_table_name->alias = Identifier(*col_id);
+#else
+		base_table_name->alias = col_id->GetIdentifierName();
+#endif
 	}
 	return base_table_name;
 }
@@ -47,7 +57,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformTruncateStatement(PEGTr
                                                                            const bool &has_result,
                                                                            unique_ptr<BaseTableRef> base_table_name) {
 	auto result = make_uniq<DeleteStatement>();
+	#if __has_include("duckdb/common/identifier.hpp")
 	result->node->table = std::move(base_table_name);
+#else
+	result->table = std::move(base_table_name);
+#endif
 	return std::move(result);
 }
 

@@ -8,9 +8,15 @@
 #include "duckdb/common/operator/negate.hpp"
 #include "duckdb/parser/expression/type_expression.hpp"
 #include "duckdb/common/types/bignum.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
+
+static unique_ptr<ParsedExpression> MakeSimpleType(Identifier name,
+                                                 vector<unique_ptr<ParsedExpression>> children) {
+	return make_uniq<TypeExpression>(duckpgq_compat::HostName(name), std::move(children));
+}
 
 string PEGTransformerFactory::TransformIdentifierOrKeyword(PEGTransformer &transformer, ParseResult &parse_result) {
 	if (parse_result.type == ParseResultType::IDENTIFIER) {
@@ -60,10 +66,10 @@ LogicalType PEGTransformerFactory::TransformType(PEGTransformer &transformer,
 			children_types.push_back(std::move(type));
 
 			if (array_size < 0) {
-				type = make_uniq<TypeExpression>(Identifier("list"), std::move(children_types));
+				type = MakeSimpleType(Identifier("list"), std::move(children_types));
 			} else {
 				children_types.push_back(make_uniq<ConstantExpression>(Value::BIGINT(array_size)));
-				type = make_uniq<TypeExpression>(Identifier("array"), std::move(children_types));
+				type = MakeSimpleType(Identifier("array"), std::move(children_types));
 			}
 		}
 	}
@@ -85,10 +91,10 @@ int64_t PEGTransformerFactory::TransformSquareBracketsArray(PEGTransformer &tran
 		throw ParserException("Expected a constant number as array size");
 	}
 	auto &const_number = array_size->Cast<ConstantExpression>();
-	if (!const_number.GetValue().type().IsIntegral()) {
-		throw BinderException("Expected an integer as array bound instead of %s", const_number.GetValue().ToString());
+	if (!duckpgq_compat::ConstantValue(const_number).type().IsIntegral()) {
+		throw BinderException("Expected an integer as array bound instead of %s", duckpgq_compat::ConstantValue(const_number).ToString());
 	}
-	auto number_val = const_number.GetValue().GetValue<int64_t>();
+	auto number_val = duckpgq_compat::ConstantValue(const_number).GetValue<int64_t>();
 	if (number_val < 0) {
 		throw ParserException("Array size must be greater than 0");
 	}
@@ -110,19 +116,19 @@ PEGTransformerFactory::TransformTimeType(PEGTransformer &transformer, const Logi
 			throw ParserException("Type TIME does not allow any modifiers");
 		}
 		if (with_timezone) {
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIME_TZ)),
+			return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIME_TZ)),
 			                                 vector<unique_ptr<ParsedExpression>> {});
 		}
-		return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIME)),
+		return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIME)),
 		                                 vector<unique_ptr<ParsedExpression>> {});
 	}
 	if (type == LogicalTypeId::TIMESTAMP) {
 		if (modifiers.empty()) {
 			if (with_timezone) {
-				return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_TZ)),
+				return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_TZ)),
 				                                 vector<unique_ptr<ParsedExpression>> {});
 			}
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)),
+			return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)),
 			                                 vector<unique_ptr<ParsedExpression>> {});
 		}
 		if (modifiers.size() > 1) {
@@ -131,7 +137,7 @@ PEGTransformerFactory::TransformTimeType(PEGTransformer &transformer, const Logi
 		if (modifiers[0]->GetExpressionClass() != ExpressionClass::CONSTANT) {
 			throw ParserException("Expected a constant expression for timestamp precision");
 		}
-		auto timestamp_precision = modifiers[0]->Cast<ConstantExpression>().GetValue().GetValue<int64_t>();
+		auto timestamp_precision = duckpgq_compat::ConstantValue(modifiers[0]->Cast<ConstantExpression>()).GetValue<int64_t>();
 		if (timestamp_precision > 10) {
 			throw ParserException("TIMESTAMP only supports until nano-second precision (9)");
 		}
@@ -139,19 +145,19 @@ PEGTransformerFactory::TransformTimeType(PEGTransformer &transformer, const Logi
 			throw ParserException("TIMESTAMP precision should be between 0 and 10 (inclusive)");
 		}
 		if (timestamp_precision == 0) {
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_S)),
+			return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_S)),
 			                                 vector<unique_ptr<ParsedExpression>> {});
 		}
 		if (timestamp_precision <= 3) {
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_MS)),
+			return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_MS)),
 			                                 vector<unique_ptr<ParsedExpression>> {});
 		}
 		if (timestamp_precision <= 6) {
 			// Corresponds to microseconds, which is the default TIMESTAMP
-			return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)),
+			return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP)),
 			                                 vector<unique_ptr<ParsedExpression>> {});
 		}
-		return make_uniq<TypeExpression>(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_NS)),
+		return MakeSimpleType(Identifier(EnumUtil::ToString(LogicalType::TIMESTAMP_NS)),
 		                                 vector<unique_ptr<ParsedExpression>> {});
 	}
 	throw ParserException("Unexpected time type encountered");
@@ -179,7 +185,7 @@ LogicalTypeId PEGTransformerFactory::TransformTimestampTypeId(PEGTransformer &tr
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSimpleNumericType(PEGTransformer &transformer,
                                                                                const string &child) {
-	return make_uniq<TypeExpression>(Identifier(child), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier(child), vector<unique_ptr<ParsedExpression>> {});
 }
 
 string PEGTransformerFactory::TransformIntType(PEGTransformer &transformer) {
@@ -213,7 +219,7 @@ string PEGTransformerFactory::TransformDoubleType(PEGTransformer &transformer) {
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformFloatType(PEGTransformer &transformer,
                                           optional<unique_ptr<ParsedExpression>> number_literal) {
-	return make_uniq<TypeExpression>(Identifier("FLOAT"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("FLOAT"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 unique_ptr<ParsedExpression>
@@ -223,7 +229,7 @@ PEGTransformerFactory::TransformDecimalType(PEGTransformer &transformer,
 	if (type_modifiers) {
 		modifiers = std::move(*type_modifiers);
 	}
-	return make_uniq<TypeExpression>(Identifier("DECIMAL"), std::move(modifiers));
+	return MakeSimpleType(Identifier("DECIMAL"), std::move(modifiers));
 }
 
 unique_ptr<ParsedExpression>
@@ -259,7 +265,7 @@ PEGTransformerFactory::TransformCharacterSimpleType(PEGTransformer &transformer,
 	if (type_modifiers) {
 		modifiers = std::move(*type_modifiers);
 	}
-	return make_uniq<TypeExpression>(Identifier("VARCHAR"), std::move(modifiers));
+	return MakeSimpleType(Identifier("VARCHAR"), std::move(modifiers));
 }
 
 unique_ptr<ParsedExpression>
@@ -270,26 +276,31 @@ PEGTransformerFactory::TransformQualifiedSimpleType(PEGTransformer &transformer,
 	if (type_modifiers) {
 		modifiers = std::move(*type_modifiers);
 	}
+#if __has_include("duckdb/common/identifier.hpp")
 	return make_uniq<TypeExpression>(qualified_type_name, std::move(modifiers));
+#else
+	return make_uniq<TypeExpression>(qualified_type_name.catalog, qualified_type_name.schema,
+	                                 qualified_type_name.name, std::move(modifiers));
+#endif
 }
 
 QualifiedName PEGTransformerFactory::TransformTypeNameAsQualifiedName(PEGTransformer &transformer,
                                                                       const Identifier &type_name) {
-	QualifiedName result(type_name);
+	auto result = duckpgq_compat::MakeQualifiedName(type_name);
 	return result;
 }
 
 QualifiedName PEGTransformerFactory::TransformSchemaReservedTypeName(PEGTransformer &transformer,
                                                                      const Identifier &schema_qualification,
                                                                      const Identifier &reserved_type_name) {
-	QualifiedName result({schema_qualification}, reserved_type_name);
+	auto result = duckpgq_compat::MakeQualifiedName({schema_qualification}, reserved_type_name);
 	return result;
 }
 
 QualifiedName PEGTransformerFactory::TransformCatalogReservedSchemaTypeName(
     PEGTransformer &transformer, const Identifier &catalog_qualification,
     const Identifier &reserved_schema_qualification, const Identifier &reserved_type_name) {
-	QualifiedName result(catalog_qualification, reserved_schema_qualification, reserved_type_name);
+	auto result = duckpgq_compat::MakeQualifiedName({catalog_qualification, reserved_schema_qualification}, reserved_type_name);
 	return result;
 }
 
@@ -301,7 +312,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformMapType(PEGTransfor
 	vector<unique_ptr<ParsedExpression>> map_children;
 	map_children.push_back(UnboundType::GetTypeExpression(type[0])->Copy());
 	map_children.push_back(UnboundType::GetTypeExpression(type[1])->Copy());
-	return make_uniq<TypeExpression>(Identifier("MAP"), std::move(map_children));
+	return MakeSimpleType(Identifier("MAP"), std::move(map_children));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformTupleType(PEGTransformer &transformer,
@@ -310,7 +321,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformTupleType(PEGTransf
 	for (auto &child : type) {
 		tuple_children.push_back(UnboundType::GetTypeExpression(child)->Copy());
 	}
-	return make_uniq<TypeExpression>(Identifier("TUPLE"), std::move(tuple_children));
+	return MakeSimpleType(Identifier("TUPLE"), std::move(tuple_children));
 }
 
 unique_ptr<ParsedExpression>
@@ -325,14 +336,14 @@ PEGTransformerFactory::TransformRowType(PEGTransformer &transformer,
 			struct_children.push_back(std::move(new_type_expr));
 		}
 	}
-	return make_uniq<TypeExpression>(Identifier("STRUCT"), std::move(struct_children));
+	return MakeSimpleType(Identifier("STRUCT"), std::move(struct_children));
 }
 
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformGeometryType(PEGTransformer &transformer,
                                              optional<unique_ptr<ParsedExpression>> expression) {
 	if (!expression) {
-		return make_uniq<TypeExpression>(Identifier("GEOMETRY"), vector<unique_ptr<ParsedExpression>> {});
+		return MakeSimpleType(Identifier("GEOMETRY"), vector<unique_ptr<ParsedExpression>> {});
 	}
 	auto geo_modifier = std::move(*expression);
 	vector<unique_ptr<ParsedExpression>> geo_children;
@@ -340,32 +351,34 @@ PEGTransformerFactory::TransformGeometryType(PEGTransformer &transformer,
 		throw ParserException("Expected a constant as type modifier");
 	}
 	geo_children.push_back(std::move(geo_modifier));
-	return make_uniq<TypeExpression>(Identifier("GEOMETRY"), std::move(geo_children));
+	return MakeSimpleType(Identifier("GEOMETRY"), std::move(geo_children));
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformVariantType(PEGTransformer &transformer) {
-	return make_uniq<TypeExpression>(Identifier("VARIANT"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("VARIANT"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformUnionType(PEGTransformer &transformer,
                                           const child_list_t<LogicalType> &col_id_type_list) {
-	identifier_set_t union_names;
 	vector<unique_ptr<ParsedExpression>> union_children;
 	for (auto &colid : col_id_type_list) {
-		union_names.insert(colid.first);
 		auto &type_expr = UnboundType::GetTypeExpression(colid.second);
 		auto new_type_expr = type_expr->Copy();
 		new_type_expr->SetAlias(colid.first);
 		union_children.push_back(std::move(new_type_expr));
 	}
-	return make_uniq<TypeExpression>(Identifier("UNION"), std::move(union_children));
+	return MakeSimpleType(Identifier("UNION"), std::move(union_children));
 }
 
 child_list_t<LogicalType>
 PEGTransformerFactory::TransformColIdTypeList(PEGTransformer &transformer,
                                               const vector<pair<Identifier, LogicalType>> &col_id_type) {
-	return col_id_type;
+	child_list_t<LogicalType> result;
+	for (auto &child : col_id_type) {
+		result.emplace_back(duckpgq_compat::HostName(child.first), child.second);
+	}
+	return result;
 }
 
 pair<Identifier, LogicalType> PEGTransformerFactory::TransformColIdType(PEGTransformer &transformer,
@@ -377,11 +390,11 @@ pair<Identifier, LogicalType> PEGTransformerFactory::TransformColIdType(PEGTrans
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformBitType(
     PEGTransformer &transformer, const bool &has_result,
     optional<vector<unique_ptr<ParsedExpression>>> expression) { // NOLINT(performance-unnecessary-value-param)
-	return make_uniq<TypeExpression>(Identifier("BIT"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("BIT"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformIntervalWithoutSpecifier(PEGTransformer &transformer) {
-	return make_uniq<TypeExpression>(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 DatePartSpecifier PEGTransformerFactory::TransformIntervalToIntervalAsType(PEGTransformer &transformer,
@@ -392,13 +405,13 @@ DatePartSpecifier PEGTransformerFactory::TransformIntervalToIntervalAsType(PEGTr
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformIntervalWithRangeSpecifier(PEGTransformer &transformer,
                                                            const DatePartSpecifier &interval_to_interval_as_type) {
-	return make_uniq<TypeExpression>(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformIntervalWithSimpleSpecifier(PEGTransformer &transformer,
                                                             const DatePartSpecifier &interval) {
-	return make_uniq<TypeExpression>(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
+	return MakeSimpleType(Identifier("INTERVAL"), vector<unique_ptr<ParsedExpression>> {});
 }
 
 DatePartSpecifier PEGTransformerFactory::TransformYearKeyword(PEGTransformer &transformer) {
@@ -500,133 +513,6 @@ DatePartSpecifier PEGTransformerFactory::TransformMinuteToSecond(PEGTransformer 
 	return UnsupportedIntervalRange(minute_keyword, second_keyword);
 }
 
-unique_ptr<ParsedExpression> PEGTransformerFactory::TryNegateValue(const ConstantExpression &expr) {
-	auto &val = expr.GetValue();
-
-	switch (val.type().id()) {
-	case LogicalTypeId::INTEGER: {
-		auto raw = val.GetValue<int32_t>();
-		if (!NegateOperator::CanNegate<int32_t>(raw)) {
-			return make_uniq<ConstantExpression>(Value::BIGINT(-static_cast<int64_t>(raw)));
-		}
-		return make_uniq<ConstantExpression>(Value::INTEGER(-raw));
-	}
-	case LogicalTypeId::BIGINT: {
-		auto raw = val.GetValue<int64_t>();
-		if (!NegateOperator::CanNegate<int64_t>(raw)) {
-			return make_uniq<ConstantExpression>(Value::HUGEINT(-static_cast<hugeint_t>(raw)));
-		}
-		return make_uniq<ConstantExpression>(Value::BIGINT(-raw));
-	}
-	case LogicalTypeId::HUGEINT: {
-		auto raw = val.GetValue<hugeint_t>();
-		if (!NegateOperator::CanNegate<hugeint_t>(raw)) {
-			return nullptr;
-		}
-		return make_uniq<ConstantExpression>(Value::HUGEINT(-raw));
-	}
-	case LogicalTypeId::UHUGEINT: {
-		auto uval = val.GetValue<uhugeint_t>();
-		uhugeint_t abs_min_hugeint = static_cast<uhugeint_t>(NumericLimits<hugeint_t>::Maximum()) + 1;
-
-		if (uval == abs_min_hugeint) {
-			return make_uniq<ConstantExpression>(Value::HUGEINT(NumericLimits<hugeint_t>::Minimum()));
-		}
-		if (uval < abs_min_hugeint) {
-			return make_uniq<ConstantExpression>(Value::HUGEINT(-static_cast<hugeint_t>(uval)));
-		}
-		return nullptr;
-	}
-	case LogicalTypeId::DOUBLE:
-		return make_uniq<ConstantExpression>(Value::DOUBLE(-val.GetValue<double>()));
-	default:
-		return nullptr;
-	}
-}
-
-unique_ptr<ParsedExpression> PEGTransformerFactory::ConvertNumberToValue(string val) {
-	string_t str_val(val);
-	bool try_cast_as_integer = true;
-	bool try_cast_as_decimal = true;
-	optional_idx decimal_position = optional_idx::Invalid();
-	idx_t num_underscores = 0;
-	idx_t num_integer_underscores = 0;
-	for (idx_t i = 0; i < str_val.GetSize(); i++) {
-		if (val[i] == '.') {
-			// decimal point: cast as either decimal or double
-			try_cast_as_integer = false;
-			decimal_position = i;
-		}
-		if (val[i] == 'e' || val[i] == 'E') {
-			// found exponent, cast as double
-			try_cast_as_integer = false;
-			try_cast_as_decimal = false;
-		}
-		if (val[i] == '_') {
-			num_underscores++;
-			if (!decimal_position.IsValid()) {
-				num_integer_underscores++;
-			}
-		}
-	}
-	if (try_cast_as_integer) {
-		int32_t int_value;
-		if (TryCast::Operation<string_t, int32_t>(str_val, int_value)) {
-			return make_uniq<ConstantExpression>(Value::INTEGER(int_value));
-		}
-		int64_t bigint_value;
-		// try to cast as bigint first
-		if (TryCast::Operation<string_t, int64_t>(str_val, bigint_value)) {
-			// successfully cast to bigint: bigint value
-			return make_uniq<ConstantExpression>(Value::BIGINT(bigint_value));
-		}
-		hugeint_t hugeint_value;
-		// if that is not successful; try to cast as hugeint
-		if (TryCast::Operation<string_t, hugeint_t>(str_val, hugeint_value)) {
-			// successfully cast to bigint: bigint value
-			return make_uniq<ConstantExpression>(Value::HUGEINT(hugeint_value));
-		}
-		uhugeint_t uhugeint_value;
-		// if that is not successful; try to cast as uhugeint
-		if (TryCast::Operation<string_t, uhugeint_t>(str_val, uhugeint_value)) {
-			// successfully cast to bigint: bigint value
-			return make_uniq<ConstantExpression>(Value::UHUGEINT(uhugeint_value));
-		}
-		// if that is not successful; try to cast as bignum for very large integers
-		// this preserves precision for integers that exceed uhugeint limits
-		try {
-			auto bignum_str = Bignum::VarcharToBignum(str_val);
-			return make_uniq<ConstantExpression>(Value::BIGNUM(bignum_str));
-		} catch (const ConversionException &) {
-			// if bignum parsing fails (e.g., invalid format), continue to decimal or double fallback
-		}
-	}
-	idx_t decimal_offset = val[0] == '-' ? 3 : 2;
-	if (try_cast_as_decimal && decimal_position.IsValid() &&
-	    str_val.GetSize() - num_underscores < Decimal::MAX_WIDTH_DECIMAL + decimal_offset) {
-		// figure out the width/scale based on the decimal position
-		auto width = NumericCast<uint8_t>(str_val.GetSize() - 1 - num_underscores);
-		auto scale = NumericCast<uint8_t>(width - decimal_position.GetIndex() + num_integer_underscores);
-		if (val[0] == '-') {
-			width--;
-		}
-		if (width <= Decimal::MAX_WIDTH_DECIMAL) {
-			// we can cast the value as a decimal
-			Value val_width = Value(str_val).DefaultCastAs(LogicalType::DECIMAL(width, scale));
-			return make_uniq<ConstantExpression>(std::move(val_width));
-		}
-	}
-	// if there is a decimal or the value is too big to cast as either hugeint or bigint
-	double dbl_value = Cast::Operation<string_t, double>(str_val);
-	return make_uniq<ConstantExpression>(Value::DOUBLE(dbl_value));
-}
-
-// NumberLiteral <- < [+-]?[0-9]*([.][0-9]*)? >
-unique_ptr<ParsedExpression> PEGTransformerFactory::TransformNumberLiteral(PEGTransformer &transformer,
-                                                                           ParseResult &parse_result) {
-	auto &literal_pr = parse_result.Cast<NumberParseResult>();
-	return ConvertNumberToValue(literal_pr.number);
-}
 
 unique_ptr<ParsedExpression> PEGTransformerFactory::TransformSetofType(PEGTransformer &transformer,
                                                                        const LogicalType &type) {

@@ -2,62 +2,10 @@
 #include "duckdb/parser/parsed_data/create_view_info.hpp"
 #include "duckdb/parser/query_node/recursive_cte_node.hpp"
 #include "duckdb/parser/query_node/set_operation_node.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
-unique_ptr<QueryNode> PEGTransformerFactory::ToRecursiveCTE(unique_ptr<QueryNode> node, const Identifier &name,
-                                                            vector<Identifier> &aliases,
-                                                            vector<unique_ptr<ParsedExpression>> &key_targets) {
-	if (node->type != QueryNodeType::SET_OPERATION_NODE) {
-		return node;
-	}
-
-	auto &set_node = node->Cast<SetOperationNode>();
-
-	if (set_node.setop_type != SetOperationType::UNION) {
-		return node;
-	}
-
-	if (set_node.children.size() < 2) {
-		throw ParserException("Expected at least two children to set operation node in recursive CTE");
-	}
-
-	auto recursive_node = make_uniq<RecursiveCTENode>();
-	recursive_node->cte_map = std::move(set_node.cte_map);
-	recursive_node->ctename = name;
-	recursive_node->aliases = aliases;
-
-	auto owned_set_node = unique_ptr_cast<QueryNode, SetOperationNode>(std::move(node));
-	recursive_node->union_all = owned_set_node->setop_all;
-
-	for (auto &modifier : owned_set_node->modifiers) {
-		if (modifier->type == ResultModifierType::LIMIT_MODIFIER) {
-			throw ParserException("LIMIT or OFFSET in a recursive query is not allowed");
-		}
-		if (modifier->type == ResultModifierType::ORDER_MODIFIER) {
-			throw ParserException("ORDER BY in a recursive query is not allowed");
-		}
-	}
-	if (owned_set_node->children.size() == 2) {
-		recursive_node->left = std::move(owned_set_node->children[0]);
-		recursive_node->right = std::move(owned_set_node->children[1]);
-	} else {
-		// N-ary flattened node: split into binary (left = all but last, right = last)
-		// This matches the left-recursive binary tree structure from the grammar
-		recursive_node->right = std::move(owned_set_node->children.back());
-		owned_set_node->children.pop_back();
-		if (owned_set_node->children.size() == 1) {
-			recursive_node->left = std::move(owned_set_node->children[0]);
-		} else {
-			recursive_node->left = std::move(owned_set_node);
-		}
-	}
-	for (auto &key : key_targets) {
-		recursive_node->key_targets.emplace_back(key->Copy());
-	}
-
-	return std::move(recursive_node);
-}
 
 void PEGTransformerFactory::WrapRecursiveView(unique_ptr<CreateViewInfo> &info, unique_ptr<QueryNode> inner_node) {
 	auto outer_select = make_uniq<SelectNode>();
@@ -65,17 +13,29 @@ void PEGTransformerFactory::WrapRecursiveView(unique_ptr<CreateViewInfo> &info, 
 	auto cte_info = make_uniq<CommonTableExpressionInfo>();
 	cte_info->aliases = info->aliases;
 
+#if __has_include("duckdb/common/identifier.hpp")
 	cte_info->query_node = std::move(inner_node);
-
 	outer_select->cte_map.map.insert(info->GetViewName(), std::move(cte_info));
+#else
+	cte_info->query = make_uniq<SelectStatement>();
+	cte_info->query->node = std::move(inner_node);
+	outer_select->cte_map.map.insert(info->view_name, std::move(cte_info));
+#endif
 
 	for (const auto &column : info->aliases) {
 		outer_select->select_list.push_back(make_uniq<ColumnRefExpression>(column));
 	}
 
+#if __has_include("duckdb/common/identifier.hpp")
 	auto table_description = TableDescription(
 	    QualifiedName(info->GetQualifiedName().Catalog(), info->GetQualifiedName().Schema(), info->GetViewName()));
 	outer_select->from_table = make_uniq<BaseTableRef>(table_description);
+#else
+	// Refer to the local CTE, not to a catalog-qualified stored view.
+	auto table = make_uniq<BaseTableRef>();
+	table->table_name = info->view_name;
+	outer_select->from_table = std::move(table);
+#endif
 
 	auto outer_select_statement = make_uniq<SelectStatement>();
 	outer_select_statement->node = std::move(outer_select);
@@ -84,7 +44,11 @@ void PEGTransformerFactory::WrapRecursiveView(unique_ptr<CreateViewInfo> &info, 
 
 void PEGTransformerFactory::ConvertToRecursiveView(unique_ptr<CreateViewInfo> &info, unique_ptr<QueryNode> &node) {
 	vector<unique_ptr<ParsedExpression>> empty_key_targets;
+#if __has_include("duckdb/common/identifier.hpp")
 	auto result_node = ToRecursiveCTE(std::move(node), info->GetViewName(), info->aliases, empty_key_targets);
+#else
+	auto result_node = ToRecursiveCTE(std::move(node), Identifier(info->view_name), StringsToIdentifiers(info->aliases), empty_key_targets);
+#endif
 	WrapRecursiveView(info, std::move(result_node));
 }
 
@@ -97,11 +61,22 @@ PEGTransformerFactory::TransformCreateViewStmt(PEGTransformer &transformer, cons
 	auto result = make_uniq<CreateStatement>();
 	auto info = make_uniq<CreateViewInfo>();
 	info->on_conflict = if_not_exists ? OnCreateConflict::IGNORE_ON_CONFLICT : OnCreateConflict::ERROR_ON_CONFLICT;
+#if __has_include("duckdb/common/identifier.hpp")
 	info->SetQualifiedName(qualified_name);
+#else
+	info->catalog = qualified_name.catalog;
+	info->schema = qualified_name.schema;
+	info->view_name = qualified_name.name;
+#endif
 	if (insert_column_list) {
-		info->aliases = StringsToIdentifiers(*insert_column_list);
+		info->aliases = duckpgq_compat::HostNames(StringsToIdentifiers(*insert_column_list));
 	}
 	if (with_list) {
+#if !__has_include("duckdb/common/identifier.hpp")
+		if (!with_list->empty()) {
+			throw NotImplementedException("VIEW options are not supported by canonical DuckDB 1.5.5");
+		}
+#else
 		for (auto &option_entry : *with_list) {
 			if (!StringUtil::CIEquals(option_entry.first, "defer_binding")) {
 				throw ParserException("Only DEFER_BINDING is currently supported as option for CREATE VIEW");
@@ -118,6 +93,7 @@ PEGTransformerFactory::TransformCreateViewStmt(PEGTransformer &transformer, cons
 				info->binding_mode = CreateViewBindingMode::SKIP_BINDING;
 			}
 		}
+#endif
 	}
 	if (create_recursive) {
 		ConvertToRecursiveView(info, select_statement_internal->node);

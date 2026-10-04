@@ -1,5 +1,5 @@
 #pragma once
-#include "duckdb/common/enums/trigger_type.hpp"
+#include "duckpgq/third_party/duckdb_peg_parser/peg/ast/trigger_type_compat.hpp"
 #include "duckdb/common/vector.hpp"
 
 #include "duckpgq/parser/identifier.hpp"

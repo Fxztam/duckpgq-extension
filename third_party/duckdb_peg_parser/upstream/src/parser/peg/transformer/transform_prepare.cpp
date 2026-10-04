@@ -1,4 +1,5 @@
 #include "duckdb/parser/statement/prepare_statement.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
@@ -22,7 +23,7 @@ PEGTransformerFactory::TransformPrepareStatement(PEGTransformer &transformer, co
                                                  const optional<vector<LogicalType>> &type_list,
                                                  unique_ptr<SQLStatement> statement) {
 	auto result = make_uniq<PrepareStatement>();
-	result->name = identifier;
+	result->name = duckpgq_compat::HostName(identifier);
 	if (!IsPrepareableStatement(statement->type)) {
 		throw ParserException("%s is not a preparable statement", EnumUtil::ToString(statement->type));
 	}

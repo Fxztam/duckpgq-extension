@@ -37,6 +37,29 @@ add_library_unity(
   transform_load.cpp
   transform_merge_into.cpp
   transform_pivot.cpp
+  transform_pivot_table.cpp
+  transform_join.cpp
+  transform_grouping_cte.cpp
+  transform_window_case.cpp
+  transform_window_function.cpp
+  transform_function.cpp
+  transform_expression_basics.cpp
+  transform_array_subquery.cpp
+  transform_struct_comparison.cpp
+  transform_regex_between.cpp
+  transform_arithmetic.cpp
+  transform_collate_parameters.cpp
+  transform_unary_numbers.cpp
+  transform_aggregate_star.cpp
+  transform_child_operators.cpp
+  transform_subqueries.cpp
+  transform_replace_entry.cpp
+  transform_interval.cpp
+  transform_comprehension.cpp
+  transform_window_named.cpp
+  transform_parse_helpers.cpp
+  transform_select_modifiers.cpp
+  transform_constant.cpp
   transform_pragma.cpp
   transform_prepare.cpp
   transform_select.cpp

@@ -9,7 +9,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformDeallocateStatement(PEG
                                                                              const Identifier &identifier) {
 	auto result = make_uniq<DropStatement>();
 	result->info->type = CatalogType::PREPARED_STATEMENT;
+#if __has_include("duckdb/common/identifier.hpp")
 	result->info->SetName(identifier);
+#else
+	result->info->name = identifier.GetIdentifierName();
+#endif
 	return std::move(result);
 }
 

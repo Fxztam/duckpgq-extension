@@ -12,7 +12,15 @@ unique_ptr<CreateStatement> PEGTransformerFactory::TransformCreateSchemaStmt(PEG
 	// Store the full dotted path, with an empty trailing name so the new schema lands in the Schema() slot (keeping
 	// catalog/schema serialization correct). The leading components are resolved into a catalog + parent-schema chain
 	// during binding (see Binder::BindCreateSchema).
+#if __has_include("duckdb/common/identifier.hpp")
 	info->SetQualifiedName(QualifiedName(qualified_name.Path(), Identifier()));
+#else
+	if (!qualified_name.catalog.empty()) {
+		throw ParserException("Nested schemas are not supported by canonical DuckDB 1.5.5");
+	}
+	info->catalog = qualified_name.schema;
+	info->schema = qualified_name.name;
+#endif
 
 	result->info = std::move(info);
 	return result;

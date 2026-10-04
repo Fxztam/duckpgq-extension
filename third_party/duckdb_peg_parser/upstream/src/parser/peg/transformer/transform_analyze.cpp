@@ -15,7 +15,11 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformAnalyzeStatement(PEGTra
 		throw NotImplementedException("ANALYZE VERBOSE is not implemented yet");
 	}
 	if (analyze_target && analyze_target->ref) {
+#if __has_include("duckdb/common/identifier.hpp")
 		result->info->columns = analyze_target->columns;
+#else
+		result->info->columns = IdentifiersToStrings(analyze_target->columns);
+#endif
 		result->info->ref = std::move(analyze_target->ref);
 		result->info->has_table = true;
 	}

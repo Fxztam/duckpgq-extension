@@ -1,5 +1,7 @@
+#include "duckpgq/compat/name_metadata.hpp"
+#include "duckpgq/compat/function_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
-#include "duckdb/common/enums/trigger_type.hpp"
+#include "duckpgq/third_party/duckdb_peg_parser/peg/ast/trigger_type_compat.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/matcher.hpp"
 #include "duckdb/common/to_string.hpp"
 #include "duckdb/parser/sql_statement.hpp"
@@ -21,11 +23,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformStatement(PEGTransforme
 	auto &list_pr = parse_result.Cast<ListParseResult>();
 	auto &choice_pr = list_pr.Child<ChoiceParseResult>(0);
 	auto result = transformer.Transform<unique_ptr<SQLStatement>>(choice_pr.GetResult());
-	if (!transformer.named_parameter_map.empty()) {
-		// Avoid overriding a previous move with nothing
-		result->named_param_map = transformer.named_parameter_map;
-	}
-	result->has_anonymous_parameters = transformer.has_anonymous_parameters;
+	duckpgq_compat::TransferStatementParameters(*result, transformer.named_parameter_map,
+	                                           transformer.has_anonymous_parameters);
 	return result;
 }
 
@@ -42,10 +41,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformStatementTrampoline(PEG
 
 	TransformStack stack(transformer);
 	auto result = stack.Execute<unique_ptr<SQLStatement>>(choice_result, *ops_entry->second);
-	if (!transformer.named_parameter_map.empty()) {
-		result->named_param_map = transformer.named_parameter_map;
-	}
-	result->has_anonymous_parameters = transformer.has_anonymous_parameters;
+	duckpgq_compat::TransferStatementParameters(*result, transformer.named_parameter_map,
+	                                           transformer.has_anonymous_parameters);
 	return result;
 }
 
@@ -64,9 +61,8 @@ static unique_ptr<SQLStatement> ExtractAndTransformStatement(PEGTransformer &tra
                                                              optional_idx terminator_offset) {
 	auto stmt = transformer.Transform<unique_ptr<SQLStatement>>(stmt_pr);
 
-	if (!transformer.named_parameter_map.empty()) {
-		stmt->named_param_map = transformer.named_parameter_map;
-	}
+	duckpgq_compat::TransferStatementParameters(*stmt, transformer.named_parameter_map,
+	                                           transformer.has_anonymous_parameters);
 	if (!transformer.pivot_entries.empty()) {
 		stmt = transformer.CreatePivotStatement(std::move(stmt));
 	}
@@ -220,174 +216,18 @@ PEGTransformerFactory::PEGTransformerFactory() {
 
 const case_insensitive_map_t<PEGTransformer::AnyTransformFunction> &
 PEGTransformerFactory::GetTransformFunctions(ParserOptions &options) {
+#if __has_include("duckdb/common/identifier.hpp")
 	if (options.debug_transformer_trampoline_style) {
 		return trampoline_transform_functions;
 	}
+#endif
 	return sql_transform_functions;
 }
 
-vector<reference<ParseResult>> PEGTransformerFactory::ExtractParseResultsFromList(ParseResult &parse_result) {
-	// List(D) <- D (',' D)* ','?
-	vector<reference<ParseResult>> result;
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	result.push_back(list_pr.GetChild(0));
-	auto &opt_child = list_pr.Child<OptionalParseResult>(1);
-	if (opt_child.HasResult()) {
-		auto &repeat_result = opt_child.GetResult().Cast<RepeatParseResult>();
-		for (auto &child : repeat_result.GetChildren()) {
-			auto &list_child = child.get().Cast<ListParseResult>();
-			result.push_back(list_child.GetChild(1));
-		}
-	}
-	return result;
-}
 
-ParseResult &PEGTransformerFactory::ExtractResultFromParens(ParseResult &parse_result) {
-	// Parens(D) <- '(' D ')'
-	auto &list_pr = parse_result.Cast<ListParseResult>();
-	return list_pr.GetChild(1);
-}
 
-bool PEGTransformerFactory::ExpressionIsEmptyStar(const ParsedExpression &expr) {
-	if (expr.GetExpressionClass() != ExpressionClass::STAR) {
-		return false;
-	}
-	auto &star = expr.Cast<StarExpression>();
-	if (!star.IsColumns() && star.ExcludeList().empty() && star.ReplaceList().empty()) {
-		return true;
-	}
-	return false;
-}
 
-QualifiedName PEGTransformerFactory::StringToQualifiedName(vector<string> input) {
-	if (input.empty()) {
-		throw InternalException("QualifiedName cannot be made with an empty input.");
-	}
-	if (input.size() == 1) {
-		return QualifiedName(Identifier(input[0]));
-	} else if (input.size() == 2) {
-		return QualifiedName({Identifier(input[0])}, Identifier(input[1]));
-	} else if (input.size() == 3) {
-		return QualifiedName(Identifier(input[0]), Identifier(input[1]), Identifier(input[2]));
-	} else {
-		throw ParserException("Too many qualifications found - expected [catalog.schema.name] or [schema.name]");
-	}
-}
 
-LogicalType PEGTransformerFactory::GetIntervalTargetType(DatePartSpecifier date_part) {
-	switch (date_part) {
-	case DatePartSpecifier::YEAR:
-	case DatePartSpecifier::MONTH:
-	case DatePartSpecifier::DAY:
-	case DatePartSpecifier::WEEK:
-	case DatePartSpecifier::QUARTER:
-	case DatePartSpecifier::DECADE:
-	case DatePartSpecifier::CENTURY:
-	case DatePartSpecifier::MILLENNIUM:
-		return LogicalType::INTEGER;
-	case DatePartSpecifier::HOUR:
-	case DatePartSpecifier::MINUTE:
-	case DatePartSpecifier::MICROSECONDS:
-		return LogicalType::BIGINT;
-	case DatePartSpecifier::MILLISECONDS:
-	case DatePartSpecifier::SECOND:
-		return LogicalType::DOUBLE;
-	default:
-		throw InternalException("Unsupported interval post-fix");
-	}
-}
-
-bool PEGTransformerFactory::ConstructConstantFromExpression(const ParsedExpression &expr, Value &value) {
-	// We have to construct it like this because we don't have the ClientContext for binding/executing the expr here
-	switch (expr.GetExpressionType()) {
-	case ExpressionType::FUNCTION: {
-		auto &function = expr.Cast<FunctionExpression>();
-		if (function.FunctionName() == "struct_pack") {
-			identifier_set_t unique_names;
-			child_list_t<Value> values;
-			values.reserve(function.GetArguments().size());
-			for (const auto &child : function.GetArguments()) {
-				if (!unique_names.insert(child.GetExpression().GetAlias()).second) {
-					throw BinderException("Duplicate struct entry name \"%s\"",
-					                      child.GetExpression().GetAlias().GetIdentifierName());
-				}
-				Value child_value;
-				if (!ConstructConstantFromExpression(child.GetExpression(), child_value)) {
-					return false;
-				}
-				values.emplace_back(child.GetExpression().GetAlias(), std::move(child_value));
-			}
-			value = Value::STRUCT(std::move(values));
-			return true;
-		} else if (function.FunctionName() == "list_value") {
-			vector<Value> values;
-			values.reserve(function.GetArguments().size());
-			for (const auto &child : function.GetArguments()) {
-				Value child_value;
-				if (!ConstructConstantFromExpression(child.GetExpression(), child_value)) {
-					return false;
-				}
-				values.emplace_back(std::move(child_value));
-			}
-
-			// figure out child type
-			LogicalType child_type(LogicalTypeId::SQLNULL);
-			for (auto &child_value : values) {
-				child_type = LogicalType::DefaultForceMaxLogicalType(child_type, child_value.type());
-			}
-
-			// finally create the list
-			value = Value::LIST(child_type, values);
-			return true;
-		} else if (function.FunctionName() == "map") {
-			Value keys;
-			if (!ConstructConstantFromExpression(function.GetArguments()[0].GetExpression(), keys)) {
-				return false;
-			}
-
-			Value values;
-			if (!ConstructConstantFromExpression(function.GetArguments()[1].GetExpression(), values)) {
-				return false;
-			}
-
-			vector<Value> keys_unpacked = ListValue::GetChildren(keys);
-			vector<Value> values_unpacked = ListValue::GetChildren(values);
-
-			value = Value::MAP(ListType::GetChildType(keys.type()), ListType::GetChildType(values.type()),
-			                   keys_unpacked, values_unpacked);
-			return true;
-		} else {
-			return false;
-		}
-	}
-	case ExpressionType::VALUE_CONSTANT: {
-		auto &constant = expr.Cast<ConstantExpression>();
-		value = constant.GetValue();
-		return true;
-	}
-	case ExpressionType::OPERATOR_CAST: {
-		auto &cast = expr.Cast<CastExpression>();
-		Value dummy_value;
-		if (!ConstructConstantFromExpression(cast.Child(), dummy_value)) {
-			return false;
-		}
-
-		auto cast_type = UnboundType::TryDefaultBind(cast.TargetType());
-		if (cast_type == LogicalType::INVALID || cast_type == LogicalTypeId::UNBOUND) {
-			return false;
-		}
-
-		string error_message;
-		if (!dummy_value.DefaultTryCastAs(cast_type, value, &error_message)) {
-			throw ConversionException("Unable to cast %s to %s", dummy_value.ToString(),
-			                          EnumUtil::ToString(cast_type.id()));
-		}
-		return true;
-	}
-	default:
-		return false;
-	}
-}
 
 } // namespace duckpgq_peg
 } // namespace duckdb

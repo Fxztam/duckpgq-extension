@@ -3,6 +3,7 @@
 #include "duckdb/parser/statement/copy_database_statement.hpp"
 #include "duckdb/parser/statement/copy_statement.hpp"
 #include "duckdb/parser/statement/pragma_statement.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
@@ -17,7 +18,7 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 	case_insensitive_string_set_t option_names;
 	for (auto &option : options) {
 		if (option_names.find(option.name.GetIdentifierName()) != option_names.end()) {
-			throw ParserException("Unexpected duplicate option \"%s\"", option.name);
+			throw ParserException("Unexpected duplicate option \"%s\"", option.name.GetIdentifierName());
 		}
 		option_names.insert(option.name.GetIdentifierName());
 		if (option.name == "PARTITION_BY" || option.name == "FORCE_QUOTE" || option.name == "FORCE_NOT_NULL" ||
@@ -26,11 +27,11 @@ void SetCopyOptions(unique_ptr<CopyInfo> &info, vector<GenericCopyOption> &optio
 				info->parsed_options[option.name.GetIdentifierName()] = std::move(option.expression);
 			} else {
 				if (option.children.empty()) {
-					throw BinderException("\"%s\" expects a column list or * as parameter", option.name);
+					throw BinderException("\"%s\" expects a column list or * as parameter", option.name.GetIdentifierName());
 				}
 				vector<unique_ptr<ParsedExpression>> func_children;
 				for (const auto &partition : option.children) {
-					func_children.push_back(make_uniq<ColumnRefExpression>(Identifier(partition.GetValue<string>())));
+					func_children.push_back(make_uniq<ColumnRefExpression>(duckpgq_compat::HostName(Identifier(partition.GetValue<string>()))));
 				}
 				auto row_func = make_uniq<FunctionExpression>("row", std::move(func_children));
 				info->parsed_options[option.name.GetIdentifierName()] = std::move(row_func);
@@ -76,7 +77,7 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopySelect(
 	info->is_from = false;
 	if (copy_file_name->GetExpressionClass() == ExpressionClass::CONSTANT) {
 		auto &const_expr = copy_file_name->Cast<ConstantExpression>();
-		info->file_path = const_expr.GetValue().GetValue<string>();
+		info->file_path = duckpgq_compat::ConstantValue(const_expr).GetValue<string>();
 	} else {
 		info->file_path_expression = std::move(copy_file_name);
 	}
@@ -93,7 +94,7 @@ unique_ptr<SQLStatement>
 PEGTransformerFactory::TransformCopyFromDatabaseWithFlag(PEGTransformer &transformer, const Identifier &col_id,
                                                          const Identifier &col_id_1,
                                                          const CopyDatabaseType &copy_database_flag) {
-	return make_uniq<CopyDatabaseStatement>(Identifier(col_id), Identifier(col_id_1), copy_database_flag);
+	return make_uniq<CopyDatabaseStatement>(duckpgq_compat::HostName(col_id), duckpgq_compat::HostName(col_id_1), copy_database_flag);
 }
 
 unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyFromDatabaseWithoutFlag(PEGTransformer &transformer,
@@ -101,8 +102,8 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformCopyFromDatabaseWithout
                                                                                      const Identifier &col_id_1) {
 	auto result = make_uniq<PragmaStatement>();
 	result->info->name = "copy_database";
-	result->info->parameters.emplace_back(make_uniq<ConstantExpression>(Value(col_id)));
-	result->info->parameters.emplace_back(make_uniq<ConstantExpression>(Value(col_id_1)));
+	result->info->parameters.emplace_back(make_uniq<ConstantExpression>(Value(col_id.GetIdentifierName())));
+	result->info->parameters.emplace_back(make_uniq<ConstantExpression>(Value(col_id_1.GetIdentifierName())));
 	return std::move(result);
 }
 
@@ -134,14 +135,24 @@ PEGTransformerFactory::TransformCopyTable(PEGTransformer &transformer, unique_pt
 	auto result = make_uniq<CopyStatement>();
 	auto info = make_uniq<CopyInfo>();
 
+#if __has_include("duckdb/common/identifier.hpp")
 	info->SetQualifiedName(base_table_name->GetQualifiedName());
+#else
+	info->catalog = base_table_name->catalog_name;
+	info->schema = base_table_name->schema_name;
+	info->table = base_table_name->table_name;
+#endif
 	if (insert_column_list) {
+#if __has_include("duckdb/common/identifier.hpp")
 		info->select_list = StringsToIdentifiers(*insert_column_list);
+#else
+		info->select_list = *insert_column_list;
+#endif
 	}
 	info->is_from = from_or_to;
 	if (copy_file_name->GetExpressionClass() == ExpressionClass::CONSTANT) {
 		auto &const_expr = copy_file_name->Cast<ConstantExpression>();
-		info->file_path = const_expr.GetValue().GetValue<string>();
+		info->file_path = duckpgq_compat::ConstantValue(const_expr).GetValue<string>();
 	} else {
 		info->file_path_expression = std::move(copy_file_name);
 	}
@@ -178,7 +189,7 @@ unique_ptr<ParsedExpression> PEGTransformerFactory::TransformCopyFileNameIdentif
 unique_ptr<ParsedExpression>
 PEGTransformerFactory::TransformCopyFileNameIdentifierColId(PEGTransformer &transformer,
                                                             const Identifier &identifier_col_id) {
-	return make_uniq<ConstantExpression>(Value(identifier_col_id));
+	return make_uniq<ConstantExpression>(Value(identifier_col_id.GetIdentifierName()));
 }
 
 Identifier PEGTransformerFactory::TransformIdentifierColId(PEGTransformer &transformer, const Identifier &identifier,

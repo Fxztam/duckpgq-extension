@@ -1,8 +1,85 @@
 #include "duckdb/parser/tableref/showref.hpp"
+#include "duckpgq/compat/alter_access.hpp"
 #include "duckpgq/third_party/duckdb_peg_parser/peg/transformer/peg_transformer.hpp"
 
 namespace duckdb {
 namespace duckpgq_peg {
+
+static string DescribeCatalog(const QualifiedName &n) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return n.Catalog().GetIdentifierName();
+#else
+	return n.catalog;
+#endif
+}
+static string DescribeSchema(const QualifiedName &n) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return n.Schema().GetIdentifierName();
+#else
+	return n.schema;
+#endif
+}
+static string DescribeName(const QualifiedName &n) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return n.Name().GetIdentifierName();
+#else
+	return n.name;
+#endif
+}
+static string DescribeSchema(const BaseTableRef &n) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return n.GetQualifiedName().Schema().GetIdentifierName();
+#else
+	return n.schema_name;
+#endif
+}
+static string DescribeName(const BaseTableRef &n) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return n.Table().GetIdentifierName();
+#else
+	return n.table_name;
+#endif
+}
+
+template<class T> static void DescribeSetTable(ShowRef &ref, const T &value) {
+#if __has_include("duckdb/common/identifier.hpp")
+	ref.SetTableName(Identifier(value));
+#else
+	ref.table_name = Identifier(value).GetIdentifierName();
+#endif
+}
+
+template<class T> static void DescribeSetSchema(ShowRef &ref, const T &value) {
+#if __has_include("duckdb/common/identifier.hpp")
+	ref.SetSchemaName(Identifier(value));
+#else
+	ref.schema_name = Identifier(value).GetIdentifierName();
+#endif
+}
+
+template<class T> static void DescribeSetCatalog(ShowRef &ref, const T &value) {
+#if __has_include("duckdb/common/identifier.hpp")
+	ref.SetCatalogName(Identifier(value));
+#else
+	ref.catalog_name = Identifier(value).GetIdentifierName();
+#endif
+}
+
+static bool DescribeNameEmpty(const ShowRef &ref) {
+#if __has_include("duckdb/common/identifier.hpp")
+	return ref.GetTableName().empty();
+#else
+	return ref.table_name.empty();
+#endif
+}
+static void DescribeSetBase(BaseTableRef &ref, const Identifier &value) {
+#if __has_include("duckdb/common/identifier.hpp")
+	ref.SetTable(value);
+#else
+	ref.table_name = value.GetIdentifierName();
+#endif
+}
+
 
 unique_ptr<SelectStatement> PEGTransformerFactory::TransformDescribeStatement(PEGTransformer &transformer,
                                                                               unique_ptr<QueryNode> child) {
@@ -28,15 +105,15 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowTables(PEGTransformer 
                                                                  const QualifiedName &qualified_name) {
 	auto showref = make_uniq<ShowRef>();
 	showref->show_type = ShowType::SHOW_FROM;
-	if (!IsInvalidCatalog(qualified_name.Catalog())) {
+	if (!IsInvalidCatalog(DescribeCatalog(qualified_name))) {
 		throw ParserException("Expected \"SHOW TABLES FROM database\", \"SHOW TABLES FROM schema\", or "
 		                      "\"SHOW TABLES FROM database.schema\"");
 	}
-	if (IsInvalidSchema(qualified_name.Schema())) {
-		showref->SetSchemaName(qualified_name.Name());
+	if (IsInvalidSchema(DescribeSchema(qualified_name))) {
+		DescribeSetSchema(*showref, DescribeName(qualified_name));
 	} else {
-		showref->SetCatalogName(qualified_name.Schema());
-		showref->SetSchemaName(qualified_name.Name());
+		DescribeSetCatalog(*showref, DescribeSchema(qualified_name));
+		DescribeSetSchema(*showref, DescribeName(qualified_name));
 	}
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
@@ -48,7 +125,7 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowAllTables(PEGTransform
                                                                     const ShowType &show_or_describe) {
 	auto result = make_uniq<ShowRef>();
 	// Legacy reasons, see bind_showref.cpp
-	result->SetTableName("__show_tables_expanded");
+	DescribeSetTable(*result, "__show_tables_expanded");
 	result->show_type = ShowType::SHOW_UNQUALIFIED;
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
@@ -61,7 +138,7 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformDescribePropertyGraph(PEGT
                                                                            const QualifiedName &qualified_name) {
 	auto showref = make_uniq<ShowRef>();
 	showref->show_type = ShowType::DESCRIBE;
-	showref->SetTableName(qualified_name.Name());
+	DescribeSetTable(*showref, DescribeName(qualified_name));
 
 	auto select_node = make_uniq<SelectNode>();
 	select_node->select_list.push_back(make_uniq<StarExpression>());
@@ -82,36 +159,36 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowQualifiedName(PEGTrans
 	if (target.is_table_name || target.table_ref) {
 		if (target.is_table_name) {
 			// Case: SHOW 'something' or DESCRIBE 'something'
-			showref->SetTableName(target.table_name);
+			DescribeSetTable(*showref, target.table_name);
 		} else {
 			// Case: A relation/table reference
 			auto &base_table = *target.table_ref;
 
 			if (showref->show_type == ShowType::SHOW_FROM) {
 				// Logic for SHOW TABLES FROM [database].[schema]
-				if (IsInvalidSchema(base_table.GetQualifiedName().Schema())) {
-					showref->SetSchemaName(base_table.Table());
+				if (IsInvalidSchema(DescribeSchema(base_table))) {
+					DescribeSetSchema(*showref, DescribeName(base_table));
 				} else {
-					showref->SetCatalogName(base_table.GetQualifiedName().Schema());
-					showref->SetSchemaName(base_table.Table());
+					DescribeSetCatalog(*showref, DescribeSchema(base_table));
+					DescribeSetSchema(*showref, DescribeName(base_table));
 				}
-			} else if (IsInvalidSchema(base_table.GetQualifiedName().Schema())) {
+			} else if (IsInvalidSchema(DescribeSchema(base_table))) {
 				// Logic for unqualified relations (databases, tables, variables)
-				auto table_name = StringUtil::Lower(base_table.Table().GetIdentifierName());
+				auto table_name = StringUtil::Lower(DescribeName(base_table));
 				if (table_name == "databases" || table_name == "tables" || table_name == "schemas" ||
 				    table_name == "variables") {
-					showref->SetTableName(Identifier("\"" + table_name + "\""));
+					DescribeSetTable(*showref, Identifier("\"" + table_name + "\""));
 					showref->show_type = ShowType::SHOW_UNQUALIFIED;
 				}
 			}
 		}
-		if (showref->GetTableName().empty() && showref->show_type != ShowType::SHOW_FROM) {
+		if (DescribeNameEmpty(*showref) && showref->show_type != ShowType::SHOW_FROM) {
 			auto show_select_node = make_uniq<SelectNode>();
 			show_select_node->select_list.push_back(make_uniq<StarExpression>());
 			if (target.is_table_name) {
 				// Case: SHOW 'something' or DESCRIBE 'something'
 				auto table_ref = make_uniq<BaseTableRef>();
-				table_ref->SetTable(target.table_name);
+				DescribeSetBase(*table_ref, target.table_name);
 				show_select_node->from_table = std::move(table_ref);
 			} else {
 				// Case: A relation/table reference
@@ -124,7 +201,7 @@ unique_ptr<QueryNode> PEGTransformerFactory::TransformShowQualifiedName(PEGTrans
 		if (showref->show_type == ShowType::SUMMARY) {
 			throw ParserException("Expected table name with SUMMARIZE");
 		}
-		showref->SetTableName("__show_tables_expanded");
+		DescribeSetTable(*showref, "__show_tables_expanded");
 		showref->show_type = ShowType::SHOW_UNQUALIFIED;
 	}
 

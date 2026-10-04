@@ -10,10 +10,17 @@ unique_ptr<SQLStatement> PEGTransformerFactory::TransformVacuumStatement(PEGTran
 	VacuumOptions options;
 	if (vacuum_options) {
 		options = *vacuum_options;
+	} else {
+		// A bare VACUUM [table] is a vacuum; the canonical parser sets this flag too.
+		options.vacuum = true;
 	}
 	auto result = make_uniq<VacuumStatement>(options);
 	if (analyze_target && analyze_target->ref) {
+#if __has_include("duckdb/common/identifier.hpp")
 		result->info->columns = analyze_target->columns;
+#else
+		result->info->columns = IdentifiersToStrings(analyze_target->columns);
+#endif
 		result->info->ref = std::move(analyze_target->ref);
 		result->info->has_table = true;
 	}
