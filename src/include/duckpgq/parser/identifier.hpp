@@ -14,6 +14,8 @@
 #include "duckdb/common/case_insensitive_map.hpp"
 #include "duckdb/common/constants.hpp"
 #include "duckdb/common/string.hpp"
+#include "duckdb/common/unordered_map.hpp"
+#include "duckdb/common/vector.hpp"
 
 #include <iosfwd>
 
@@ -136,6 +138,22 @@ struct IdentifierCompare {
 		return a < b;
 	}
 };
+
+template <typename T>
+using identifier_map_t = unordered_map<Identifier, T, IdentifierHashFunction, IdentifierEquality>;
+
+inline vector<string> IdentifiersToStrings(const vector<Identifier> &values) {
+	vector<string> result;
+	result.reserve(values.size());
+	for (const auto &value : values) result.push_back(value.GetIdentifierName());
+	return result;
+}
+inline vector<Identifier> StringsToIdentifiers(const vector<string> &values) {
+	vector<Identifier> result;
+	result.reserve(values.size());
+	for (const auto &value : values) result.emplace_back(value);
+	return result;
+}
 
 } // namespace duckdb
 

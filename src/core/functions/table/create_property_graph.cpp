@@ -21,14 +21,8 @@ static Identifier PGQIdentifier(const Identifier &value) {
 	return value;
 }
 
-static void BindPropertyGraphTable(ClientContext &context, const shared_ptr<PropertyGraphTable> &table) {
-	auto catalog = table->catalog_name;
-	auto schema = table->schema_name;
-	Binder::BindSchemaOrCatalog(context, catalog, schema);
-	table->catalog_name = catalog;
-	table->schema_name = schema;
-}
-
+// Canonical DuckDB 1.5.5 catalog and binder APIs take plain strings; the fork takes Identifier.
+#if __has_include("duckdb/common/identifier.hpp")
 static void BindPropertyGraphReference(ClientContext &context, Identifier &catalog_name, Identifier &schema_name) {
 	auto catalog = catalog_name;
 	auto schema = schema_name;
@@ -36,21 +30,56 @@ static void BindPropertyGraphReference(ClientContext &context, Identifier &catal
 	catalog_name = catalog;
 	schema_name = schema;
 }
+#else
+static void BindPropertyGraphReference(ClientContext &context, Identifier &catalog_name, Identifier &schema_name) {
+	auto catalog = catalog_name.GetIdentifierName();
+	auto schema = schema_name.GetIdentifierName();
+	Binder::BindSchemaOrCatalog(context, catalog, schema);
+	catalog_name = Identifier(catalog);
+	schema_name = Identifier(schema);
+}
+#endif
+
+static void BindPropertyGraphTable(ClientContext &context, const shared_ptr<PropertyGraphTable> &table) {
+	BindPropertyGraphReference(context, table->catalog_name, table->schema_name);
+}
+
+#if __has_include("duckdb/common/identifier.hpp")
+static const Identifier &PGQColumnName(const Identifier &value) {
+	return value;
+}
+#else
+static string PGQColumnName(const Identifier &value) {
+	return value.GetIdentifierName();
+}
+#endif
 
 static optional_ptr<TableCatalogEntry> GetPropertyGraphTable(ClientContext &context,
                                                              const shared_ptr<PropertyGraphTable> &table) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return Catalog::GetEntry<TableCatalogEntry>(context,
 	                                            QualifiedName(PGQIdentifier(table->catalog_name),
 	                                                          PGQIdentifier(table->schema_name),
 	                                                          PGQIdentifier(table->table_name)),
 	                                            OnEntryNotFound::RETURN_NULL);
+#else
+	return Catalog::GetEntry<TableCatalogEntry>(context, table->catalog_name.GetIdentifierName(),
+	                                            table->schema_name.GetIdentifierName(),
+	                                            table->table_name.GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
+#endif
 }
 
 static optional_ptr<CatalogEntry> GetPropertyGraphView(ClientContext &context,
                                                        const shared_ptr<PropertyGraphTable> &table) {
+#if __has_include("duckdb/common/identifier.hpp")
 	auto &catalog = Catalog::GetCatalog(context, PGQIdentifier(table->catalog_name));
 	return catalog.GetEntry(context, CatalogType::VIEW_ENTRY, PGQIdentifier(table->schema_name),
 	                        PGQIdentifier(table->table_name), OnEntryNotFound::RETURN_NULL);
+#else
+	auto &catalog = Catalog::GetCatalog(context, table->catalog_name.GetIdentifierName());
+	return catalog.GetEntry(context, CatalogType::VIEW_ENTRY, table->schema_name.GetIdentifierName(),
+	                        table->table_name.GetIdentifierName(), OnEntryNotFound::RETURN_NULL);
+#endif
 }
 
 static void ThrowMissingVertexReference(CreatePropertyGraphInfo &info, const Identifier &catalog_name,
@@ -75,11 +104,11 @@ static vector<Identifier> ExpandAllColumnsExcept(vector<string> column_names,
 void CreatePropertyGraphFunction::CheckPropertyGraphTableLabels(const shared_ptr<PropertyGraphTable> &pg_table,
                                                                 optional_ptr<TableCatalogEntry> &table) {
 	if (!pg_table->discriminator.empty()) {
-		if (!table->ColumnExists(PGQIdentifier(pg_table->discriminator))) {
+		if (!table->ColumnExists(PGQColumnName(pg_table->discriminator))) {
 			throw Exception(ExceptionType::INVALID,
 			                "Column " + pg_table->discriminator + " not found in table " + pg_table->table_name);
 		}
-		auto &column = table->GetColumn(PGQIdentifier(pg_table->discriminator));
+		auto &column = table->GetColumn(PGQColumnName(pg_table->discriminator));
 		if (!(column.GetType() == LogicalType::BIGINT || column.GetType() == LogicalType::INTEGER)) {
 			throw Exception(ExceptionType::INVALID, "The discriminator column " + pg_table->discriminator +
 			                                            " of table " + pg_table->table_name +
@@ -96,7 +125,7 @@ void CreatePropertyGraphFunction::CheckPropertyGraphTableColumns(const shared_pt
 
 	if (pg_table->all_columns) {
 		for (auto &except_column : pg_table->except_columns) {
-			if (!table->ColumnExists(PGQIdentifier(except_column))) {
+			if (!table->ColumnExists(PGQColumnName(except_column))) {
 				throw Exception(ExceptionType::INVALID,
 				                "EXCEPT column " + except_column + " not found in table " + pg_table->table_name);
 			}
@@ -108,7 +137,7 @@ void CreatePropertyGraphFunction::CheckPropertyGraphTableColumns(const shared_pt
 	}
 
 	for (auto &column : pg_table->column_names) {
-		if (!table->ColumnExists(PGQIdentifier(column))) {
+		if (!table->ColumnExists(PGQColumnName(column))) {
 			throw Exception(ExceptionType::INVALID, "Column " + column + " not found in table " + pg_table->table_name);
 		}
 	}
@@ -146,8 +175,13 @@ void CreatePropertyGraphFunction::ValidateKeys(shared_ptr<PropertyGraphTable> &e
 					                                            " KEY <primary key> REFERENCES " + reference +
 					                                            " <foreign key>`");
 				}
+#if __has_include("duckdb/common/identifier.hpp")
 				pk_columns = fk_constraint.pk_columns;
 				fk_columns = fk_constraint.fk_columns;
+#else
+				pk_columns = StringsToIdentifiers(fk_constraint.pk_columns);
+				fk_columns = StringsToIdentifiers(fk_constraint.fk_columns);
+#endif
 			}
 		}
 
@@ -169,7 +203,7 @@ void CreatePropertyGraphFunction::ValidateForeignKeyColumns(shared_ptr<PropertyG
                                                             const vector<Identifier> &fk_columns,
                                                             optional_ptr<TableCatalogEntry> &table) {
 	for (const auto &fk : fk_columns) {
-		if (!table->ColumnExists(PGQIdentifier(fk))) {
+		if (!table->ColumnExists(PGQColumnName(fk))) {
 			throw Exception(ExceptionType::INVALID,
 			                "Foreign key " + fk + " does not exist in table " + edge_table->table_name);
 		}
@@ -195,7 +229,7 @@ void CreatePropertyGraphFunction::ValidatePrimaryKeyInTable(ClientContext &conte
 	}
 
 	for (const auto &pk : pk_columns) {
-		if (!table->ColumnExists(PGQIdentifier(pk))) {
+		if (!table->ColumnExists(PGQColumnName(pk))) {
 			throw Exception(ExceptionType::INVALID,
 			                "Primary key " + pk + " does not exist in table " + pg_table->table_name);
 		}

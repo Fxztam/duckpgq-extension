@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/common/vector_operations/generic_executor.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -85,7 +87,7 @@ static void CsrInitializeWeight(DuckPGQState &context, int32_t id, int64_t e_siz
 
 static void CreateCsrVertexFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CSRFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<CSRFunctionData>();
 
 	auto duckpgq_state = GetDuckPGQState(info.context);
 	int64_t input_size = args.data[1].GetValue(0).GetValue<int64_t>();
@@ -111,7 +113,7 @@ static void CreateCsrVertexFunction(DataChunk &args, ExpressionState &state, Vec
 
 static void CreateCsrEdgeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CSRFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<CSRFunctionData>();
 
 	auto duckpgq_state = GetDuckPGQState(info.context, true);
 
@@ -129,8 +131,8 @@ static void CreateCsrEdgeFunction(DataChunk &args, ExpressionState &state, Vecto
 		CsrInitializeEdge(*duckpgq_state, info.id, vertex_size, edge_size);
 	}
 	if (info.weight_type == LogicalType::SQLNULL) {
-		TernaryExecutor::Execute<int64_t, int64_t, int64_t, int32_t>(
-		    args.data[4], args.data[5], args.data[6], result, [&](int64_t src, int64_t dst, int64_t edge_id) {
+		duckpgq_compat::ExecuteTernary<int64_t, int64_t, int64_t, int32_t>(
+		    args.data[4], args.data[5], args.data[6], result, args.size(), [&](int64_t src, int64_t dst, int64_t edge_id) {
 			    auto pos = ++csr_entry->second->v[src + 1];
 			    csr_entry->second->e[(int64_t)pos - 1] = dst;
 			    csr_entry->second->edge_ids[(int64_t)pos - 1] = edge_id;
@@ -143,13 +145,13 @@ static void CreateCsrEdgeFunction(DataChunk &args, ExpressionState &state, Vecto
 		CsrInitializeWeight(*duckpgq_state, info.id, edge_size, weight_type);
 	}
 	UnifiedVectorFormat src_data, dst_data, edge_id_data, weight_data;
-	args.data[4].ToUnifiedFormat(src_data);
-	args.data[5].ToUnifiedFormat(dst_data);
-	args.data[6].ToUnifiedFormat(edge_id_data);
-	args.data[7].ToUnifiedFormat(weight_data);
+	duckpgq_compat::ToUnified(args.data[4], args.size(), src_data);
+	duckpgq_compat::ToUnified(args.data[5], args.size(), dst_data);
+	duckpgq_compat::ToUnified(args.data[6], args.size(), edge_id_data);
+	duckpgq_compat::ToUnified(args.data[7], args.size(), weight_data);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<int32_t>(result);
-	auto &result_validity = FlatVector::ValidityMutable(result);
+	auto result_data = duckpgq_compat::MutableData<int32_t>(result);
+	auto &result_validity = duckpgq_compat::MutableValidity(result);
 	auto src_values = reinterpret_cast<const int64_t *>(src_data.data);
 	auto dst_values = reinterpret_cast<const int64_t *>(dst_data.data);
 	auto edge_id_values = reinterpret_cast<const int64_t *>(edge_id_data.data);
@@ -202,7 +204,7 @@ ScalarFunctionSet GetCSRVertexFunction() {
 
 	set.AddFunction(ScalarFunction(
 	    "create_csr_vertex", {LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	    LogicalType::BIGINT, CreateCsrVertexFunction, CSRFunctionData::CSRVertexBind));
+	    LogicalType::BIGINT, CreateCsrVertexFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSRVertexBind>()));
 
 	return set;
 }
@@ -222,17 +224,17 @@ ScalarFunctionSet GetCSREdgeFunction() {
 	//! No edge weight
 	set.AddFunction(ScalarFunction({LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
 	                                LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	                               LogicalType::INTEGER, CreateCsrEdgeFunction, CSRFunctionData::CSREdgeBind));
+	                               LogicalType::INTEGER, CreateCsrEdgeFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSREdgeBind>()));
 
 	//! Integer for edge weight
 	set.AddFunction(ScalarFunction({LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
 	                                LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	                               LogicalType::INTEGER, CreateCsrEdgeFunction, CSRFunctionData::CSREdgeBind));
+	                               LogicalType::INTEGER, CreateCsrEdgeFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSREdgeBind>()));
 
 	//! Double for edge weight
 	set.AddFunction(ScalarFunction({LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT,
 	                                LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::DOUBLE},
-	                               LogicalType::INTEGER, CreateCsrEdgeFunction, CSRFunctionData::CSREdgeBind));
+	                               LogicalType::INTEGER, CreateCsrEdgeFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSREdgeBind>()));
 
 	return set;
 }

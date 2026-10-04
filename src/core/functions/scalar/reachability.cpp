@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -12,35 +14,39 @@ namespace duckdb {
 
 typedef enum { NO_ARRAY, ARRAY, INTERMEDIATE } msbfs_modes_t;
 
-static int16_t InitialiseBfs(idx_t curr_batch, idx_t size, const_data_ptr_t src_data, const SelectionVector *src_sel,
-                             const ValidityMask &src_validity, vector<std::bitset<LANE_LIMIT>> &seen,
-                             vector<std::bitset<LANE_LIMIT>> &visit, vector<std::bitset<LANE_LIMIT>> &visit_next,
-                             unordered_map<int64_t, pair<int16_t, vector<idx_t>>> &lane_map) {
+// Rows with a NULL source or destination get no lane and are answered with NULL by the caller, but they are
+// consumed: the returned count is the number of rows scanned, not the number of rows that got a lane. (Counting only
+// lane rows stalled the batch loop forever when the remaining rows were all NULL, and made it rescan rows.)
+static idx_t InitialiseBfs(idx_t curr_batch, idx_t size, const int64_t *src_data, const SelectionVector *src_sel,
+                           const ValidityMask &src_validity, const SelectionVector *dst_sel,
+                           const ValidityMask &dst_validity, vector<std::bitset<LANE_LIMIT>> &seen,
+                           vector<std::bitset<LANE_LIMIT>> &visit, vector<std::bitset<LANE_LIMIT>> &visit_next,
+                           unordered_map<int64_t, pair<int16_t, vector<idx_t>>> &lane_map) {
 	int16_t lanes = 0;
-	int16_t curr_batch_size = 0;
-
-	for (idx_t i = curr_batch; i < size && lanes < LANE_LIMIT; i++) {
+	idx_t i = curr_batch;
+	for (; i < size && lanes < LANE_LIMIT; i++) {
 		auto src_index = src_sel->get_index(i);
-
-		if (src_validity.RowIsValid(src_index)) {
-			auto src_entry = src_data[src_index];
-			auto entry = lane_map.find(src_entry);
-			if (entry == lane_map.end()) {
-				lane_map[src_entry].first = lanes;
-				seen[src_entry][lanes] = true;
-				visit[src_entry][lanes] = true;
-				lanes++;
-			}
-			lane_map[src_entry].second.push_back(i);
-			curr_batch_size++;
+		auto dst_index = dst_sel->get_index(i);
+		if (!src_validity.RowIsValid(src_index) || !dst_validity.RowIsValid(dst_index)) {
+			continue;
 		}
+		auto src_entry = src_data[src_index];
+		auto entry = lane_map.find(src_entry);
+		if (entry == lane_map.end()) {
+			lane_map[src_entry].first = lanes;
+			seen[src_entry][lanes] = true;
+			visit[src_entry][lanes] = true;
+			lanes++;
+		}
+		lane_map[src_entry].second.push_back(i);
 	}
-	return curr_batch_size;
+	return i - curr_batch;
 }
 
 static bool BfsWithoutArrayVariant(bool exit_early, CSR *csr, int64_t input_size, vector<std::bitset<LANE_LIMIT>> &seen,
                                    vector<std::bitset<LANE_LIMIT>> &visit, vector<std::bitset<LANE_LIMIT>> &visit_next,
                                    vector<int64_t> &visit_list) {
+	visit_list.clear(); // rebuilt below as exactly the new frontier
 	for (int64_t i = 0; i < input_size; i++) {
 		if (!visit[i].any()) {
 			continue;
@@ -164,7 +170,7 @@ static int FindMode(int mode, size_t visit_list_len, size_t visit_limit, size_t 
 
 static void ReachabilityFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<IterativeLengthFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<IterativeLengthFunctionData>();
 
 	bool is_variant = args.data[1].GetValue(0).GetValue<bool>();
 	int64_t input_size = args.data[2].GetValue(0).GetValue<int64_t>();
@@ -172,13 +178,15 @@ static void ReachabilityFunction(DataChunk &args, ExpressionState &state, Vector
 	auto &src = args.data[3];
 
 	UnifiedVectorFormat vdata_src, vdata_target;
-	src.ToUnifiedFormat(vdata_src);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
 
-	auto src_data = vdata_src.data;
+	// The unified format exposes raw bytes; the BIGINT columns must be read as int64_t (indexing the byte pointer
+	// read one byte per element and made every comparison depend on neighbouring bytes).
+	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 
 	auto &target = args.data[4];
-	target.ToUnifiedFormat(vdata_target);
-	auto target_data = vdata_target.data;
+	duckpgq_compat::ToUnified(target, args.size(), vdata_target);
+	auto target_data = reinterpret_cast<const int64_t *>(vdata_target.data);
 
 	idx_t result_size = 0;
 	vector<int64_t> visit_list;
@@ -186,12 +194,27 @@ static void ReachabilityFunction(DataChunk &args, ExpressionState &state, Vector
 	size_t num_nodes_to_visit = 0;
 	result.SetVectorType(VectorType::FLAT_VECTOR);
 
-	auto result_data = FlatVector::GetDataMutable<bool>(result);
+	auto result_data = duckpgq_compat::MutableData<bool>(result);
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	CSR *csr = duckpgq_state->GetCSR(info.csr_id);
 
+	// NULL source or destination: the answer is NULL (these rows get no lane in InitialiseBfs)
+	auto &result_validity = duckpgq_compat::MutableValidity(result);
+	for (idx_t i = 0; i < args.size(); i++) {
+		if (!vdata_src.validity.RowIsValid(vdata_src.sel->get_index(i)) ||
+		    !vdata_target.validity.RowIsValid(vdata_target.sel->get_index(i))) {
+			result_validity.SetInvalid(i);
+			result_data[i] = false;
+		}
+	}
+
 	while (result_size < args.size()) {
+		// The frontier list and its size statistic belong to one batch. A stale non-empty list made the variant mode
+		// switch to the array mode on the first iteration of the next batch, which then expanded the old frontier
+		// instead of the new source vertices, so later batches missed paths.
+		visit_list.clear();
+		num_nodes_to_visit = 0;
 		vector<std::bitset<LANE_LIMIT>> seen(input_size);
 		vector<std::bitset<LANE_LIMIT>> visit(input_size);
 		vector<std::bitset<LANE_LIMIT>> visit_next(input_size);
@@ -199,7 +222,7 @@ static void ReachabilityFunction(DataChunk &args, ExpressionState &state, Vector
 		//! mapping of src_value ->  (bfs_num/lane, vector of indices in src_data)
 		unordered_map<int64_t, pair<int16_t, vector<idx_t>>> lane_map;
 		auto curr_batch_size = InitialiseBfs(result_size, args.size(), src_data, vdata_src.sel, vdata_src.validity,
-		                                     seen, visit, visit_next, lane_map);
+		                                     vdata_target.sel, vdata_target.validity, seen, visit, visit_next, lane_map);
 		int mode = 0;
 		bool exit_early = false;
 		while (!exit_early) {
@@ -260,7 +283,7 @@ void CoreScalarFunctions::RegisterReachabilityScalarFunction(ExtensionLoader &lo
 	loader.RegisterFunction(ScalarFunction(
 	    "reachability",
 	    {LogicalType::INTEGER, LogicalType::BOOLEAN, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	    LogicalType::BOOLEAN, ReachabilityFunction, IterativeLengthFunctionData::IterativeLengthBind));
+	    LogicalType::BOOLEAN, ReachabilityFunction, duckpgq_compat::AdaptBind<IterativeLengthFunctionData::IterativeLengthBind>()));
 }
 
 } // namespace duckdb

@@ -11,11 +11,17 @@ namespace duckdb {
 
 static void EnableParserOverride(ExtensionLoader &loader) {
 	auto &db = loader.GetDatabaseInstance();
+#if __has_include("duckdb/common/identifier.hpp")
 	Settings::Set<AllowParserOverrideExtensionSetting>(db, SetScope::GLOBAL, Value("STRICT"));
 
 	for (auto &context : ConnectionManager::Get(db).GetConnectionList()) {
 		Settings::Set<AllowParserOverrideExtensionSetting>(*context, SetScope::SESSION, Value("STRICT"));
 	}
+#else
+	// Canonical 1.5.5: the setting has GLOBAL_DEFAULT scope, so sessions inherit the global value. Existing
+	// connections are not touched individually (running SQL on the loading context from inside LOAD is unsafe).
+	DBConfig::GetConfig(db).SetOptionByName(AllowParserOverrideExtensionSetting::Name, Value("STRICT"));
+#endif
 }
 
 static void LoadInternal(ExtensionLoader &loader) {

@@ -1,5 +1,11 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
+#if __has_include("duckdb/common/identifier.hpp")
 #include "duckdb/common/vector/list_vector.hpp"
+#else
+#include "duckdb/common/types/vector.hpp"
+#endif
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
 #include "duckpgq/core/functions/function_data/iterative_length_function_data.hpp"
@@ -42,7 +48,7 @@ static bool IterativeLength(int64_t v_size, int64_t *V, vector<int64_t> &E, vect
 
 static void ShortestPathFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<IterativeLengthFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<IterativeLengthFunctionData>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	D_ASSERT(duckpgq_state->csr_list[info.csr_id]);
@@ -65,15 +71,15 @@ static void ShortestPathFunction(DataChunk &args, ExpressionState &state, Vector
 	auto &target = args.data[3];
 
 	UnifiedVectorFormat vdata_src, vdata_dst;
-	src.ToUnifiedFormat(vdata_src);
-	target.ToUnifiedFormat(vdata_dst);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
+	duckpgq_compat::ToUnified(target, args.size(), vdata_dst);
 
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 	auto dst_data = reinterpret_cast<const int64_t *>(vdata_dst.data);
 
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<list_entry_t>(result);
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
+	auto result_data = duckpgq_compat::MutableData<list_entry_t>(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
 
 	// create temp SIMD arrays
 	vector<std::bitset<LANE_LIMIT>> seen(v_size);
@@ -108,7 +114,8 @@ static void ShortestPathFunction(DataChunk &args, ExpressionState &state, Vector
 			while (started_searches < args.size()) {
 				int64_t search_num = started_searches++;
 				auto src_pos = vdata_src.sel->get_index(search_num);
-				if (!vdata_src.validity.RowIsValid(src_pos)) {
+				auto dst_pos_check = vdata_dst.sel->get_index(search_num);
+				if (!vdata_src.validity.RowIsValid(src_pos) || !vdata_dst.validity.RowIsValid(dst_pos_check)) {
 					result_validity.SetInvalid(search_num);
 				} else {
 					visit1[src_data[src_pos]][lane] = true;
@@ -158,7 +165,7 @@ static void ShortestPathFunction(DataChunk &args, ExpressionState &state, Vector
 			if (src_data[src_pos] == dst_data[dst_pos]) { // Source == destination
 				unique_ptr<Vector> output = make_uniq<Vector>(LogicalType::LIST(LogicalType::BIGINT));
 				ListVector::PushBack(*output, src_data[src_pos]);
-				ListVector::Append(result, ListVector::GetChild(*output), ListVector::GetListSize(*output));
+				ListVector::Append(result, duckpgq_compat::ListChild(*output), ListVector::GetListSize(*output));
 				result_data[search_num].length = ListVector::GetListSize(*output);
 				result_data[search_num].offset = total_len;
 				total_len += result_data[search_num].length;
@@ -199,7 +206,7 @@ static void ShortestPathFunction(DataChunk &args, ExpressionState &state, Vector
 
 			result_data[search_num].length = ListVector::GetListSize(*output);
 			result_data[search_num].offset = total_len;
-			ListVector::Append(result, ListVector::GetChild(*output), ListVector::GetListSize(*output));
+			ListVector::Append(result, duckpgq_compat::ListChild(*output), ListVector::GetListSize(*output));
 			total_len += result_data[search_num].length;
 		}
 	}
@@ -213,7 +220,7 @@ void CoreScalarFunctions::RegisterShortestPathScalarFunction(ExtensionLoader &lo
 	loader.RegisterFunction(ScalarFunction(
 	    "shortestpath", {LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
 	    LogicalType::LIST(LogicalType::BIGINT), ShortestPathFunction,
-	    IterativeLengthFunctionData::IterativeLengthBind));
+	    duckpgq_compat::AdaptBind<IterativeLengthFunctionData::IterativeLengthBind>()));
 }
 
 } // namespace duckdb

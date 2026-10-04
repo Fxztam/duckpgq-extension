@@ -1,6 +1,10 @@
 #include "duckpgq/core/utils/duckpgq_sql.hpp"
 
+#if __has_include("duckdb/common/identifier.hpp")
 #include "duckdb/common/sql_identifier.hpp"
+#else
+#include "duckdb/parser/keyword_helper.hpp"
+#endif
 #include "duckdb/parser/parser.hpp"
 #include "duckdb/parser/query_node/select_node.hpp"
 #include "duckdb/parser/expression/subquery_expression.hpp"
@@ -8,7 +12,11 @@
 namespace duckdb {
 
 string DuckPGQSQL::Identifier(const string &identifier) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return SQLIdentifier::ToString(identifier);
+#else
+	return KeywordHelper::WriteQuoted(identifier, '"');
+#endif
 }
 
 string DuckPGQSQL::Identifier(const duckdb::Identifier &identifier) {
@@ -16,7 +24,11 @@ string DuckPGQSQL::Identifier(const duckdb::Identifier &identifier) {
 }
 
 string DuckPGQSQL::StringLiteral(const string &value) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return SQLString::ToString(value);
+#else
+	return KeywordHelper::WriteQuoted(value, '\'');
+#endif
 }
 
 string DuckPGQSQL::QualifiedTableName(const string &catalog, const string &schema, const string &table) {
@@ -96,19 +108,32 @@ unique_ptr<SelectStatement> DuckPGQSQL::ParseSelect(const string &query, const s
 unique_ptr<CommonTableExpressionInfo> DuckPGQSQL::ParseCTE(const string &query, const string &context) {
 	auto result = make_uniq<CommonTableExpressionInfo>();
 	auto select_statement = ParseSelect(query, context);
+#if __has_include("duckdb/common/identifier.hpp")
 	result->query_node = std::move(select_statement->node);
+#else
+	result->query = std::move(select_statement);
+#endif
 	return result;
 }
 
 unique_ptr<SubqueryExpression> DuckPGQSQL::ParseScalarSubquery(const string &query, const string &context) {
 	auto result = make_uniq<SubqueryExpression>();
+#if __has_include("duckdb/common/identifier.hpp")
 	result->SubqueryMutable() = ParseSelect(query, context);
 	result->GetSubqueryTypeMutable() = SubqueryType::SCALAR;
+#else
+	result->subquery = ParseSelect(query, context);
+	result->subquery_type = SubqueryType::SCALAR;
+#endif
 	return result;
 }
 
 unique_ptr<SubqueryRef> DuckPGQSQL::ParseSubqueryRef(const string &query, const string &alias, const string &context) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return make_uniq<SubqueryRef>(ParseSelect(query, context), duckdb::Identifier(alias));
+#else
+	return make_uniq<SubqueryRef>(ParseSelect(query, context), alias);
+#endif
 }
 
 unique_ptr<duckdb::TableRef> DuckPGQSQL::ParseFromTableRef(const string &table_ref_sql, const string &context) {

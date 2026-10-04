@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 //===----------------------------------------------------------------------===//
 //                         DuckPGQ
 //
@@ -18,7 +19,7 @@ struct CheapestPathLengthFunctionData final : FunctionData {
 
 	CheapestPathLengthFunctionData(ClientContext &context, int32_t csr_id) : context(context), csr_id(csr_id) {
 	}
-	static unique_ptr<FunctionData> CheapestPathLengthBind(BindScalarFunctionInput &input);
+	static unique_ptr<FunctionData> CheapestPathLengthBind(duckpgq_compat::ScalarBindInput &input);
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;

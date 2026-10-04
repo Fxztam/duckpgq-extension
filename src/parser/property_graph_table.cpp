@@ -1,6 +1,7 @@
 #include "duckdb/common/string_util.hpp"
 #include "duckdb/common/types/hash.hpp"
 #include "duckpgq/parser/property_graph_table.hpp"
+#include "duckpgq/compat/identifier_serialization.hpp"
 
 namespace duckdb {
 
@@ -242,73 +243,76 @@ bool PropertyGraphTable::SameTableIdentity(const PropertyGraphTable &other) cons
 }
 
 void PropertyGraphTable::Serialize(Serializer &serializer) const {
-	serializer.WriteProperty(100, "catalog_name", catalog_name);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 100, "catalog_name", catalog_name);
 
-	serializer.WriteProperty(101, "schema_name", schema_name);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 101, "schema_name", schema_name);
 
-	serializer.WriteProperty(102, "table_name", table_name);
-	serializer.WriteProperty(103, "table_name_alias", table_name_alias); // alias (not used for now)
-	serializer.WriteProperty(104, "column_names", column_names);
-	serializer.WriteProperty(105, "column_aliases", column_aliases);
-	serializer.WriteProperty(106, "except_columns", except_columns);
-	serializer.WriteProperty(107, "sub_labels", sub_labels);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 102, "table_name", table_name);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 103, "table_name_alias", table_name_alias); // alias (not used for now)
+	duckpgq_compat::WriteIdentifierProperty(serializer, 104, "column_names", column_names);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 105, "column_aliases", column_aliases);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 106, "except_columns", except_columns);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 107, "sub_labels", sub_labels);
 
-	serializer.WriteProperty(108, "main_label", main_label);
+	duckpgq_compat::WriteIdentifierProperty(serializer, 108, "main_label", main_label);
 	serializer.WriteProperty(109, "is_vertex_table", is_vertex_table);
 	serializer.WriteProperty(110, "all_columns", all_columns);
 	serializer.WriteProperty(111, "no_columns", no_columns);
 
 	if (!is_vertex_table) {
-		serializer.WriteProperty(112, "source_pk", source_pk);
-		serializer.WriteProperty(113, "source_fk", source_fk);
-		serializer.WriteProperty(114, "source_catalog", source_catalog);
-		serializer.WriteProperty(115, "source_schema", source_schema);
-		serializer.WriteProperty(116, "source_reference", source_reference);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 112, "source_pk", source_pk);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 113, "source_fk", source_fk);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 114, "source_catalog", source_catalog);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 115, "source_schema", source_schema);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 116, "source_reference", source_reference);
 
-		serializer.WriteProperty(117, "destination_pk", destination_pk);
-		serializer.WriteProperty(118, "destination_fk", destination_fk);
-		serializer.WriteProperty(119, "destination_catalog", destination_catalog);
-		serializer.WriteProperty(120, "destination_schema", destination_schema);
-		serializer.WriteProperty(121, "destination_reference", destination_reference);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 117, "destination_pk", destination_pk);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 118, "destination_fk", destination_fk);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 119, "destination_catalog", destination_catalog);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 120, "destination_schema", destination_schema);
+		duckpgq_compat::WriteIdentifierProperty(serializer, 121, "destination_reference", destination_reference);
 
 		serializer.WriteProperty(122, "source_pg_table", source_pg_table);
 		serializer.WriteProperty(123, "destination_pg_table", destination_pg_table);
 	}
+	// Appended optional string: old records omit it and decode as empty.
+	serializer.WritePropertyWithDefault(124, "discriminator", discriminator.GetIdentifierName());
 }
 
 shared_ptr<PropertyGraphTable> PropertyGraphTable::Deserialize(Deserializer &deserializer) {
 	auto pg_table = make_shared_ptr<PropertyGraphTable>();
-	deserializer.ReadProperty(100, "catalog_name", pg_table->catalog_name);
-	deserializer.ReadProperty(101, "schema_name", pg_table->schema_name);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 100, "catalog_name", pg_table->catalog_name);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 101, "schema_name", pg_table->schema_name);
 
-	deserializer.ReadProperty(102, "table_name", pg_table->table_name);
-	deserializer.ReadProperty(103, "table_name_alias", pg_table->table_name_alias);
-	deserializer.ReadProperty(104, "column_names", pg_table->column_names);
-	deserializer.ReadProperty(105, "column_aliases", pg_table->column_aliases);
-	deserializer.ReadProperty(106, "except_columns", pg_table->except_columns);
-	deserializer.ReadProperty(107, "sub_labels", pg_table->sub_labels);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 102, "table_name", pg_table->table_name);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 103, "table_name_alias", pg_table->table_name_alias);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 104, "column_names", pg_table->column_names);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 105, "column_aliases", pg_table->column_aliases);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 106, "except_columns", pg_table->except_columns);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 107, "sub_labels", pg_table->sub_labels);
 
-	deserializer.ReadProperty(108, "main_label", pg_table->main_label);
+	duckpgq_compat::ReadIdentifierProperty(deserializer, 108, "main_label", pg_table->main_label);
 	deserializer.ReadProperty(109, "is_vertex_table", pg_table->is_vertex_table);
 	deserializer.ReadProperty(110, "all_columns", pg_table->all_columns);
 	deserializer.ReadProperty(111, "no_columns", pg_table->no_columns);
 
 	if (!pg_table->is_vertex_table) {
-		deserializer.ReadProperty(112, "source_pk", pg_table->source_pk);
-		deserializer.ReadProperty(113, "source_fk", pg_table->source_fk);
-		deserializer.ReadProperty(114, "source_catalog", pg_table->source_catalog);
-		deserializer.ReadProperty(115, "source_schema", pg_table->source_schema);
-		deserializer.ReadProperty(116, "source_reference", pg_table->source_reference);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 112, "source_pk", pg_table->source_pk);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 113, "source_fk", pg_table->source_fk);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 114, "source_catalog", pg_table->source_catalog);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 115, "source_schema", pg_table->source_schema);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 116, "source_reference", pg_table->source_reference);
 
-		deserializer.ReadProperty(117, "destination_pk", pg_table->destination_pk);
-		deserializer.ReadProperty(118, "destination_fk", pg_table->destination_fk);
-		deserializer.ReadProperty(119, "destination_catalog", pg_table->destination_catalog);
-		deserializer.ReadProperty(120, "destination_schema", pg_table->destination_schema);
-		deserializer.ReadProperty(121, "destination_reference", pg_table->destination_reference);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 117, "destination_pk", pg_table->destination_pk);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 118, "destination_fk", pg_table->destination_fk);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 119, "destination_catalog", pg_table->destination_catalog);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 120, "destination_schema", pg_table->destination_schema);
+		duckpgq_compat::ReadIdentifierProperty(deserializer, 121, "destination_reference", pg_table->destination_reference);
 
 		deserializer.ReadProperty(122, "source_pg_table", pg_table->source_pg_table);
 		deserializer.ReadProperty(123, "destination_pg_table", pg_table->destination_pg_table);
 	}
+	pg_table->discriminator = Identifier(deserializer.ReadPropertyWithDefault<string>(124, "discriminator"));
 	return pg_table;
 }
 

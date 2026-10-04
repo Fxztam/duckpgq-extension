@@ -1,3 +1,4 @@
+#include "duckpgq/compat/function_access.hpp"
 
 #include "duckpgq/core/parser/duckpgq_parser.hpp"
 
@@ -81,7 +82,12 @@ static unique_ptr<SQLStatement> DuckPGQWrapStatement(unique_ptr<SQLStatement> st
 
 ParserOverrideResult duckpgq_parser_override(ParserExtensionInfo *info, const string &query, ParserOptions &options) {
 	try {
+#if __has_include("duckdb/common/identifier.hpp")
 		auto normalized_query = Parser::NormalizeSQLString(query);
+#else
+		// Canonical 1.5.5 has no Parser::NormalizeSQLString; the query is tokenized as given.
+		string normalized_query = query;
+#endif
 		vector<duckpgq_peg::MatcherToken> tokens;
 		duckpgq_peg::ParserTokenizer tokenizer(normalized_query, tokens);
 		tokenizer.TokenizeInput();
@@ -134,13 +140,17 @@ void duckpgq_find_match_function(TableRef *table_ref, DuckPGQState &duckpgq_stat
 	if (auto table_function_ref = dynamic_cast<TableFunctionRef *>(table_ref)) {
 		// Handle TableFunctionRef case
 		auto function = dynamic_cast<FunctionExpression *>(table_function_ref->function.get());
-		if (function->FunctionName() != "duckpgq_match") {
+		if (duckpgq_compat::FunctionName(*function) != "duckpgq_match") {
 			return;
 		}
-		auto &arguments = function->GetArgumentsMutable();
-		table_function_ref->alias = Identifier(arguments[0].GetExpressionMutable()->Cast<MatchExpression>().alias);
+		auto &arguments = duckpgq_compat::Arguments(*function);
+#if __has_include("duckdb/common/identifier.hpp")
+		table_function_ref->alias = Identifier(duckpgq_compat::Expression(arguments[0])->Cast<MatchExpression>().alias);
+#else
+		table_function_ref->alias = duckpgq_compat::Expression(arguments[0])->Cast<MatchExpression>().alias;
+#endif
 		int32_t match_index = duckpgq_state.match_index++;
-		duckpgq_state.transform_expression[match_index] = std::move(arguments[0].GetExpressionMutable());
+		duckpgq_state.transform_expression[match_index] = std::move(duckpgq_compat::Expression(arguments[0]));
 		arguments.pop_back();
 		auto function_identifier = make_uniq<ConstantExpression>(Value::CreateValue(match_index));
 		arguments.emplace_back(std::move(function_identifier));
@@ -179,7 +189,11 @@ ParserExtensionPlanResult duckpgq_find_select_statement(SQLStatement *statement,
 			result.return_type = StatementReturnType::QUERY_RESULT;
 			if (describe_node->show_type == ShowType::SUMMARY) {
 				result.function = SummarizePropertyGraphFunction();
+#if __has_include("duckdb/common/identifier.hpp")
 				result.parameters.push_back(Value(describe_node->GetTableName().GetIdentifierName()));
+#else
+				result.parameters.push_back(Value(describe_node->table_name));
+#endif
 				return result;
 			}
 			if (describe_node->show_type == ShowType::DESCRIBE) {
@@ -204,7 +218,11 @@ ParserExtensionPlanResult duckpgq_find_select_statement(SQLStatement *statement,
 	for (auto const &kv_pair : cte_map->map) {
 		auto const &cte = kv_pair.second;
 
+#if __has_include("duckdb/common/identifier.hpp")
 		auto *select_node = dynamic_cast<SelectNode *>(cte->query_node.get());
+#else
+		auto *select_node = cte->query ? dynamic_cast<SelectNode *>(cte->query->node.get()) : nullptr;
+#endif
 		if (!select_node) {
 			continue;
 		}
@@ -260,7 +278,11 @@ ParserExtensionPlanResult duckpgq_handle_statement(SQLStatement *statement, Duck
 	}
 	if (statement->type == StatementType::INSERT_STATEMENT) {
 		const auto &insert_statement = statement->Cast<InsertStatement>();
+#if __has_include("duckdb/common/identifier.hpp")
 		duckpgq_handle_statement(insert_statement.node->select_statement.get(), duckpgq_state);
+#else
+		duckpgq_handle_statement(insert_statement.select_statement.get(), duckpgq_state);
+#endif
 	}
 
 	throw Exception(ExceptionType::NOT_IMPLEMENTED,

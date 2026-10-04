@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/functions/function_data/iterative_length_function_data.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 #include "duckpgq/common.hpp"
@@ -15,7 +16,7 @@ bool IterativeLengthFunctionData::Equals(const FunctionData &other_p) const {
 	return other.csr_id == csr_id;
 }
 
-unique_ptr<FunctionData> IterativeLengthFunctionData::IterativeLengthBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> IterativeLengthFunctionData::IterativeLengthBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {

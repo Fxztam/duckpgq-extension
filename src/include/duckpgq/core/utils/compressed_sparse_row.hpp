@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 //===----------------------------------------------------------------------===//
 //                         DuckPGQ
 //
@@ -50,9 +51,9 @@ struct CSRFunctionData : FunctionData {
 	CSRFunctionData(ClientContext &context, int32_t id, const LogicalType &weight_type);
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;
-	static unique_ptr<FunctionData> CSRVertexBind(BindScalarFunctionInput &input);
-	static unique_ptr<FunctionData> CSREdgeBind(BindScalarFunctionInput &input);
-	static unique_ptr<FunctionData> CSRBind(BindScalarFunctionInput &input);
+	static unique_ptr<FunctionData> CSRVertexBind(duckpgq_compat::ScalarBindInput &input);
+	static unique_ptr<FunctionData> CSREdgeBind(duckpgq_compat::ScalarBindInput &input);
+	static unique_ptr<FunctionData> CSRBind(duckpgq_compat::ScalarBindInput &input);
 
 	ClientContext &context;
 	const int32_t id;

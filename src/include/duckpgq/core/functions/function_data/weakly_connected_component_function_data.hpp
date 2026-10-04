@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 //===----------------------------------------------------------------------===//
 //                         DuckPGQ
 //
@@ -23,7 +24,7 @@ struct WeaklyConnectedComponentFunctionData final : FunctionData {
 
 	WeaklyConnectedComponentFunctionData(ClientContext &context, int32_t csr_id);
 
-	static unique_ptr<FunctionData> WeaklyConnectedComponentBind(BindScalarFunctionInput &input);
+	static unique_ptr<FunctionData> WeaklyConnectedComponentBind(duckpgq_compat::ScalarBindInput &input);
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;

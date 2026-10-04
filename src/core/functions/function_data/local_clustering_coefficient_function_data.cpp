@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/functions/function_data/local_clustering_coefficient_function_data.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 
@@ -10,7 +11,7 @@ LocalClusteringCoefficientFunctionData::LocalClusteringCoefficientFunctionData(C
 }
 
 unique_ptr<FunctionData>
-LocalClusteringCoefficientFunctionData::LocalClusteringCoefficientBind(BindScalarFunctionInput &input) {
+LocalClusteringCoefficientFunctionData::LocalClusteringCoefficientBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {

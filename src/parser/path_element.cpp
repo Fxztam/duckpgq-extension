@@ -27,18 +27,22 @@ bool PathElement::Equals(const PathReference *other_p) const {
 }
 
 void PathElement::Serialize(Serializer &serializer) const {
-	serializer.WriteProperty(100, "match_type", uint8_t(match_type));
-	serializer.WriteProperty(101, "label", label);
-	serializer.WriteProperty(101, "variable_binding", variable_binding);
+	PathReference::Serialize(serializer);
+	serializer.WriteProperty(200, "match_type", uint8_t(match_type));
+	serializer.WriteProperty(201, "label", label);
+	serializer.WriteProperty(202, "variable_binding", variable_binding);
 }
 
 unique_ptr<PathReference> PathElement::Deserialize(Deserializer &deserializer) {
 	auto result = make_uniq<PathElement>(PGQPathReferenceType::PATH_ELEMENT);
 	uint8_t match_type = uint8_t(PGQMatchType::MATCH_VERTEX);
-	deserializer.ReadProperty(100, "match_type", match_type);
+	deserializer.ReadProperty(200, "match_type", match_type);
+	if (match_type > uint8_t(PGQMatchType::MATCH_EDGE_LEFT_RIGHT)) {
+		throw SerializationException("Invalid PGQ match type: %u", unsigned(match_type));
+	}
 	result->match_type = PGQMatchType(match_type);
-	deserializer.ReadProperty(101, "label", result->label);
-	deserializer.ReadProperty(102, "variable_binding", result->variable_binding);
+	deserializer.ReadProperty(201, "label", result->label);
+	deserializer.ReadProperty(202, "variable_binding", result->variable_binding);
 	return std::move(result);
 }
 

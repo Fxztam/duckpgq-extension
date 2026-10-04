@@ -1,10 +1,11 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/functions/function_data/cheapest_path_length_function_data.hpp"
 #include "duckpgq/core/utils/duckpgq_utils.hpp"
 #include "duckdb/execution/expression_executor.hpp"
 
 namespace duckdb {
 
-unique_ptr<FunctionData> CheapestPathLengthFunctionData::CheapestPathLengthBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> CheapestPathLengthFunctionData::CheapestPathLengthBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &bound_function = input.GetBoundFunction();
 	auto &arguments = input.GetArguments();

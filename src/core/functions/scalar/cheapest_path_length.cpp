@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
@@ -11,19 +13,23 @@ namespace duckdb {
 
 template <typename T, int16_t lane_limit>
 static int16_t InitialiseBellmanFord(const DataChunk &args, int64_t input_size, const UnifiedVectorFormat &vdata_src,
-                                     const int64_t *src_data, idx_t result_size, vector<vector<T>> &dists) {
+                                     const int64_t *src_data, const UnifiedVectorFormat &vdata_target,
+                                     idx_t result_size, vector<vector<T>> &dists) {
 	dists.resize(input_size, std::vector<T>(lane_limit, std::numeric_limits<T>::max() / 2));
 
-	int16_t lanes = 0;
-	for (idx_t i = result_size; i < args.size() && lanes < lane_limit; i++) {
+	// The lane of a row is its position inside the batch. Rows with a NULL source or destination get no search, but they
+	// must not shift the lanes of the valid rows behind them (the lane used to be counted over valid rows only while the
+	// results were read back by row position, so valid rows could receive another row's distances).
+	int16_t rows = 0;
+	for (idx_t lane = 0; lane < (idx_t)lane_limit && result_size + lane < args.size(); lane++, rows++) {
+		auto i = result_size + lane;
 		auto src_index = vdata_src.sel->get_index(i);
-		if (vdata_src.validity.RowIsValid(src_index)) {
-			const int64_t &src_entry = src_data[src_index];
-			dists[src_entry][lanes] = 0;
-			lanes++;
+		auto dst_index = vdata_target.sel->get_index(i);
+		if (vdata_src.validity.RowIsValid(src_index) && vdata_target.validity.RowIsValid(dst_index)) {
+			dists[src_data[src_index]][lane] = 0;
 		}
 	}
-	return lanes;
+	return rows;
 }
 
 template <typename T>
@@ -56,7 +62,7 @@ int16_t TemplatedBatchBellmanFord(CSR *csr, DataChunk &args, int64_t input_size,
                                   T *result_data, ValidityMask &result_validity) {
 	vector<vector<T>> dists;
 	int16_t curr_batch_size =
-	    InitialiseBellmanFord<T, lane_limit>(args, input_size, vdata_src, src_data, result_size, dists);
+	    InitialiseBellmanFord<T, lane_limit>(args, input_size, vdata_src, src_data, vdata_target, result_size, dists);
 	bool changed = true;
 	while (changed) {
 		changed = false;
@@ -70,13 +76,16 @@ int16_t TemplatedBatchBellmanFord(CSR *csr, DataChunk &args, int64_t input_size,
 		}
 	}
 	for (idx_t i = result_size; i < (idx_t)(result_size + curr_batch_size); i++) {
+		auto src_index = vdata_src.sel->get_index(i);
 		auto target_index = vdata_target.sel->get_index(i);
-		if (!vdata_target.validity.RowIsValid(target_index)) {
+		if (!vdata_src.validity.RowIsValid(src_index) || !vdata_target.validity.RowIsValid(target_index)) {
 			result_validity.SetInvalid(i);
+			result_data[i] = 0;
+			continue;
 		}
 
 		const auto &target_entry = target_data[target_index];
-		auto resulting_distance = dists[target_entry][i % lane_limit];
+		auto resulting_distance = dists[target_entry][i - result_size];
 
 		if (resulting_distance == std::numeric_limits<T>::max() / 2) {
 			result_validity.SetInvalid(i);
@@ -94,8 +103,8 @@ void TemplatedBellmanFord(CSR *csr, DataChunk &args, int64_t input_size, Vector 
                           const std::vector<T> &weight_array) {
 	idx_t result_size = 0;
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<T>(result);
-	auto &result_validity = FlatVector::ValidityMutable(result);
+	auto result_data = duckpgq_compat::MutableData<T>(result);
+	auto &result_validity = duckpgq_compat::MutableValidity(result);
 	vector<vector<T>> final_dists(input_size, std::vector<T>(args.size(), std::numeric_limits<T>::max() / 2));
 
 	while (result_size < args.size()) {
@@ -137,7 +146,7 @@ void TemplatedBellmanFord(CSR *csr, DataChunk &args, int64_t input_size, Vector 
 
 static void CheapestPathLengthFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CheapestPathLengthFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<CheapestPathLengthFunctionData>();
 	int64_t input_size = args.data[1].GetValue(0).GetValue<int64_t>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
@@ -145,12 +154,12 @@ static void CheapestPathLengthFunction(DataChunk &args, ExpressionState &state, 
 	auto &src = args.data[2];
 
 	UnifiedVectorFormat vdata_src, vdata_target;
-	src.ToUnifiedFormat(vdata_src);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
 
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 
 	auto &target = args.data[3];
-	target.ToUnifiedFormat(vdata_target);
+	duckpgq_compat::ToUnified(target, args.size(), vdata_target);
 	auto target_data = reinterpret_cast<const int64_t *>(vdata_target.data);
 	if (csr->w.empty()) {
 		TemplatedBellmanFord<double>(csr, args, input_size, result, vdata_src, src_data, vdata_target, target_data,
@@ -167,7 +176,7 @@ static void CheapestPathLengthFunction(DataChunk &args, ExpressionState &state, 
 void CoreScalarFunctions::RegisterCheapestPathLengthScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction(
 	    "cheapest_path_length", {LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	    LogicalType::ANY, CheapestPathLengthFunction, CheapestPathLengthFunctionData::CheapestPathLengthBind));
+	    LogicalType::ANY, CheapestPathLengthFunction, duckpgq_compat::AdaptBind<CheapestPathLengthFunctionData::CheapestPathLengthBind>()));
 }
 
 } // namespace duckdb

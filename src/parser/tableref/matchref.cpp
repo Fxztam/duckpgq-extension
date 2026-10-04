@@ -4,6 +4,17 @@
 
 namespace duckdb {
 
+// Canonical DuckDB 1.5.5 keeps expression aliases as plain strings, the fork as Identifier.
+#if __has_include("duckdb/common/identifier.hpp")
+static string PGQAliasText(const ParsedExpression &expression) {
+	return expression.GetAlias().GetIdentifierName();
+}
+#else
+static string PGQAliasText(const ParsedExpression &expression) {
+	return expression.GetAlias();
+}
+#endif
+
 string MatchExpression::ToString() const {
 	string result = "GRAPH_TABLE (";
 	result += pg_name + " MATCH";
@@ -39,7 +50,7 @@ string MatchExpression::ToString() const {
 		} else if (column_list[i]->GetExpressionType() == ExpressionType::COLUMN_REF) {
 			auto &column = column_list[i]->Cast<ColumnRefExpression>();
 			result += (i > 0 ? ", " : "") + column.ToString() +
-			          (column.GetAlias().empty() ? "" : " AS " + column.GetAlias().GetIdentifierName());
+			          (PGQAliasText(column).empty() ? "" : " AS " + PGQAliasText(column));
 		} else {
 			throw ConstraintException("Unhandled type of expression in COLUMNS");
 		}

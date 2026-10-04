@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/utils/compressed_sparse_row.hpp"
 #include "duckdb/common/string.hpp"
 #include "duckdb/execution/expression_executor.hpp"
@@ -64,7 +65,7 @@ bool CSRFunctionData::Equals(const FunctionData &other_p) const {
 	return id == other.id && weight_type == other.weight_type;
 }
 
-unique_ptr<FunctionData> CSRFunctionData::CSRVertexBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> CSRFunctionData::CSRVertexBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {
@@ -76,10 +77,10 @@ unique_ptr<FunctionData> CSRFunctionData::CSRVertexBind(BindScalarFunctionInput 
 		auto logical_type = LogicalType::SQLNULL;
 		return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), logical_type);
 	}
-	return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), arguments[3]->GetReturnType());
+	return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), duckpgq_compat::ReturnType(*arguments[3]));
 }
 
-unique_ptr<FunctionData> CSRFunctionData::CSREdgeBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> CSRFunctionData::CSREdgeBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {
@@ -87,13 +88,13 @@ unique_ptr<FunctionData> CSRFunctionData::CSREdgeBind(BindScalarFunctionInput &i
 	}
 	Value id = ExpressionExecutor::EvaluateScalar(context, *arguments[0]);
 	if (arguments.size() == 8) {
-		return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), arguments[7]->GetReturnType());
+		return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), duckpgq_compat::ReturnType(*arguments[7]));
 	}
 	auto logical_type = LogicalType::SQLNULL;
 	return make_uniq<CSRFunctionData>(context, id.GetValue<int32_t>(), logical_type);
 }
 
-unique_ptr<FunctionData> CSRFunctionData::CSRBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> CSRFunctionData::CSRBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {
@@ -208,9 +209,15 @@ unique_ptr<CommonTableExpressionInfo> MakeEdgesCTE(const shared_ptr<PropertyGrap
 // Function to create the CTE for the Undirected CSR
 unique_ptr<CommonTableExpressionInfo> CreateUndirectedCSRCTE(const shared_ptr<PropertyGraphTable> &edge_table,
                                                              const unique_ptr<SelectNode> &select_node) {
+#if __has_include("duckdb/common/identifier.hpp")
 	if (select_node->cte_map.map.find(Identifier("edges_cte")) == select_node->cte_map.map.end()) {
 		select_node->cte_map.map[Identifier("edges_cte")] = MakeEdgesCTE(edge_table);
 	}
+#else
+	if (select_node->cte_map.map.find("edges_cte") == select_node->cte_map.map.end()) {
+		select_node->cte_map.map["edges_cte"] = MakeEdgesCTE(edge_table);
+	}
+#endif
 
 	std::ostringstream query;
 	query << "SELECT create_csr_edge(0, ("

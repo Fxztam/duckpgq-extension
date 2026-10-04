@@ -91,14 +91,21 @@ public:
 	string FullTableName() const {
 		string full_table_name = catalog_name.empty() ? "" : catalog_name + ".";
 		full_table_name += schema_name.empty() ? "" : schema_name + ".";
-		full_table_name += table_name;
+		full_table_name += table_name.GetIdentifierName();
 		return full_table_name;
 	}
 
 	unique_ptr<BaseTableRef> CreateBaseTableRef(const string &alias = "") const {
 		auto base_table_ref = make_uniq<BaseTableRef>();
+#if __has_include("duckdb/common/identifier.hpp")
 		base_table_ref->SetQualifiedName(catalog_name, schema_name, table_name);
 		base_table_ref->alias = Identifier(alias.empty() ? "" : alias);
+#else
+		base_table_ref->catalog_name = catalog_name.GetIdentifierName();
+		base_table_ref->schema_name = schema_name.GetIdentifierName();
+		base_table_ref->table_name = table_name.GetIdentifierName();
+		base_table_ref->alias = alias;
+#endif
 		return base_table_ref;
 	}
 

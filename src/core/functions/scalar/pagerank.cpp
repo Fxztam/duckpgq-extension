@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
 #include "duckpgq/core/functions/function_data/pagerank_function_data.hpp"
@@ -10,7 +12,7 @@ namespace duckdb {
 
 static void PageRankFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<PageRankFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<PageRankFunctionData>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	// Locate the CSR representation of the graph
@@ -84,13 +86,13 @@ static void PageRankFunction(DataChunk &args, ExpressionState &state, Vector &re
 	// Get the source vector for the current DataChunk
 	auto &src = args.data[1];
 	UnifiedVectorFormat vdata_src;
-	src.ToUnifiedFormat(vdata_src);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 
 	// Create result vector
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<double_t>(result);
+	auto result_data = duckpgq_compat::MutableData<double_t>(result);
 
 	// Output the PageRank value corresponding to each source ID in the DataChunk
 	for (idx_t i = 0; i < args.size(); i++) {
@@ -115,7 +117,7 @@ static void PageRankFunction(DataChunk &args, ExpressionState &state, Vector &re
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterPageRankScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("pagerank", {LogicalType::INTEGER, LogicalType::BIGINT}, LogicalType::DOUBLE,
-	                                       PageRankFunction, PageRankFunctionData::PageRankBind));
+	                                       PageRankFunction, duckpgq_compat::AdaptBind<PageRankFunctionData::PageRankBind>()));
 }
 
 } // namespace duckdb

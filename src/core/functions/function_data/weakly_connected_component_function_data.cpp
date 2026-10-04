@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/functions/function_data/weakly_connected_component_function_data.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
@@ -13,7 +14,7 @@ WeaklyConnectedComponentFunctionData::WeaklyConnectedComponentFunctionData(Clien
 }
 
 unique_ptr<FunctionData>
-WeaklyConnectedComponentFunctionData::WeaklyConnectedComponentBind(BindScalarFunctionInput &input) {
+WeaklyConnectedComponentFunctionData::WeaklyConnectedComponentBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {

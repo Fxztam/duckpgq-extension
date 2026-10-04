@@ -51,7 +51,14 @@ unique_ptr<CreateInfo> CreatePropertyGraphInfo::Deserialize(Deserializer &deseri
 	deserializer.ReadProperty<string>(100, "property_graph_name", result->property_graph_name);
 
 	deserializer.ReadList(101, "vertex_tables", [&](Deserializer::List &list, idx_t i) {
-		list.ReadObject([&](Deserializer &obj) { result->vertex_tables[i]->Deserialize(obj); });
+		list.ReadObject([&](Deserializer &obj) {
+			result->vertex_tables.push_back(PropertyGraphTable::Deserialize(obj));
+		});
+	});
+	deserializer.ReadList(102, "edge_tables", [&](Deserializer::List &list, idx_t i) {
+		list.ReadObject([&](Deserializer &obj) {
+			result->edge_tables.push_back(PropertyGraphTable::Deserialize(obj));
+		});
 	});
 
 	deserializer.ReadProperty(103, "label_map", result->label_map);

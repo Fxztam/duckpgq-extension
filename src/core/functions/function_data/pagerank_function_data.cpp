@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 #include "duckpgq/core/functions/function_data/pagerank_function_data.hpp"
 
 #include "duckdb/execution/expression_executor.hpp"
@@ -12,7 +13,7 @@ PageRankFunctionData::PageRankFunctionData(ClientContext &ctx, int32_t csr)
       state_initialized(false), converged(false) {
 }
 
-unique_ptr<FunctionData> PageRankFunctionData::PageRankBind(BindScalarFunctionInput &input) {
+unique_ptr<FunctionData> PageRankFunctionData::PageRankBind(duckpgq_compat::ScalarBindInput &input) {
 	auto &context = input.GetClientContext();
 	auto &arguments = input.GetArguments();
 	if (!arguments[0]->IsFoldable()) {

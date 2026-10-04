@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
 #include "duckpgq/core/functions/function_data/local_clustering_coefficient_function_data.hpp"
@@ -35,7 +37,7 @@ const static void Link(std::vector<int64_t> &forest, int64_t nodeA, int64_t node
 
 static void WeaklyConnectedComponentFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<WeaklyConnectedComponentFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<WeaklyConnectedComponentFunctionData>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	auto csr_entry = duckpgq_state->csr_list.find(info.csr_id);
@@ -55,13 +57,13 @@ static void WeaklyConnectedComponentFunction(DataChunk &args, ExpressionState &s
 	// Get source vector for searches
 	auto &src = args.data[1];
 	UnifiedVectorFormat vdata_src;
-	src.ToUnifiedFormat(vdata_src);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
 
 	// Create result vector
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<int64_t>(result);
+	auto result_data = duckpgq_compat::MutableData<int64_t>(result);
 
 	if (!info.state_initialized) {
 		std::lock_guard<std::mutex> guard(info.initialize_lock); // Thread safety
@@ -109,7 +111,7 @@ static void WeaklyConnectedComponentFunction(DataChunk &args, ExpressionState &s
 void CoreScalarFunctions::RegisterWeaklyConnectedComponentScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("weakly_connected_component", {LogicalType::INTEGER, LogicalType::BIGINT},
 	                                       LogicalType::BIGINT, WeaklyConnectedComponentFunction,
-	                                       WeaklyConnectedComponentFunctionData::WeaklyConnectedComponentBind));
+	                                       duckpgq_compat::AdaptBind<WeaklyConnectedComponentFunctionData::WeaklyConnectedComponentBind>()));
 }
 
 } // namespace duckdb

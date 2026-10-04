@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
 #include "duckpgq/core/functions/function_data/local_clustering_coefficient_function_data.hpp"
@@ -10,7 +12,7 @@ namespace duckdb {
 
 static void LocalClusteringCoefficientFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<LocalClusteringCoefficientFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<LocalClusteringCoefficientFunctionData>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	auto csr_entry = duckpgq_state->csr_list.find(info.csr_id);
@@ -27,13 +29,13 @@ static void LocalClusteringCoefficientFunction(DataChunk &args, ExpressionState 
 	// get src and dst vectors for searches
 	auto &src = args.data[1];
 	UnifiedVectorFormat vdata_src;
-	src.ToUnifiedFormat(vdata_src);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
 	// create result vector
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<float>(result);
+	auto result_data = duckpgq_compat::MutableData<float>(result);
 
 	DuckPGQBitmap neighbors(v_size);
 
@@ -77,7 +79,7 @@ static void LocalClusteringCoefficientFunction(DataChunk &args, ExpressionState 
 void CoreScalarFunctions::RegisterLocalClusteringCoefficientScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("local_clustering_coefficient", {LogicalType::INTEGER, LogicalType::BIGINT},
 	                                       LogicalType::FLOAT, LocalClusteringCoefficientFunction,
-	                                       LocalClusteringCoefficientFunctionData::LocalClusteringCoefficientBind));
+	                                       duckpgq_compat::AdaptBind<LocalClusteringCoefficientFunctionData::LocalClusteringCoefficientBind>()));
 }
 
 } // namespace duckdb

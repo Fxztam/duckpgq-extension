@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -42,7 +44,7 @@ static std::bitset<LANE_LIMIT> InterSectFronteers(int64_t v_size, vector<std::bi
 
 static void IterativeLengthBidirectionalFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<IterativeLengthFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<IterativeLengthFunctionData>();
 
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
@@ -56,15 +58,17 @@ static void IterativeLengthBidirectionalFunction(DataChunk &args, ExpressionStat
 	auto &dst = args.data[3];
 	UnifiedVectorFormat vdata_src;
 	UnifiedVectorFormat vdata_dst;
-	src.ToUnifiedFormat(vdata_src);
-	dst.ToUnifiedFormat(vdata_dst);
-	auto src_data = vdata_src.data;
-	auto dst_data = vdata_dst.data;
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
+	duckpgq_compat::ToUnified(dst, args.size(), vdata_dst);
+	// The unified format exposes raw bytes; the BIGINT columns must be read as int64_t (indexing the byte pointer
+	// read one byte per element and made every comparison depend on neighbouring bytes).
+	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
+	auto dst_data = reinterpret_cast<const int64_t *>(vdata_dst.data);
 
 	// create result vector
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
-	auto result_data = FlatVector::GetDataMutable<int64_t>(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
+	auto result_data = duckpgq_compat::MutableData<int64_t>(result);
 
 	// create temp SIMD arrays
 	vector<std::bitset<LANE_LIMIT>> src_seen(v_size);
@@ -98,7 +102,8 @@ static void IterativeLengthBidirectionalFunction(DataChunk &args, ExpressionStat
 				int64_t search_num = started_searches++;
 				auto src_pos = vdata_src.sel->get_index(search_num);
 				auto dst_pos = vdata_dst.sel->get_index(search_num);
-				if (!vdata_src.validity.RowIsValid(src_pos)) {
+				if (!vdata_src.validity.RowIsValid(src_pos) || !vdata_dst.validity.RowIsValid(dst_pos)) {
+					// a NULL source or destination has no path (the destination used to be read as its raw value)
 					result_validity.SetInvalid(search_num);
 					result_data[search_num] = -1; // no path
 				} else if (src_data[src_pos] == dst_data[dst_pos]) {
@@ -159,7 +164,7 @@ void CoreScalarFunctions::RegisterIterativeLengthBidirectionalScalarFunction(Ext
 	loader.RegisterFunction(ScalarFunction(
 	    "iterativelengthbidirectional",
 	    {LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT}, LogicalType::BIGINT,
-	    IterativeLengthBidirectionalFunction, IterativeLengthFunctionData::IterativeLengthBind));
+	    IterativeLengthBidirectionalFunction, duckpgq_compat::AdaptBind<IterativeLengthFunctionData::IterativeLengthBind>()));
 }
 
 } // namespace duckdb

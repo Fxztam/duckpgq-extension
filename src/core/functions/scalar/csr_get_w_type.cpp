@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
 
@@ -15,7 +17,7 @@ enum class CSRWType : int32_t {
 
 static void GetCsrWTypeFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CSRFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<CSRFunctionData>();
 
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
@@ -40,7 +42,7 @@ static void GetCsrWTypeFunction(DataChunk &args, ExpressionState &state, Vector 
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterGetCSRWTypeScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("csr_get_w_type", {LogicalType::INTEGER}, LogicalType::INTEGER,
-	                                       GetCsrWTypeFunction, CSRFunctionData::CSRBind));
+	                                       GetCsrWTypeFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSRBind>()));
 }
 
 } // namespace duckdb

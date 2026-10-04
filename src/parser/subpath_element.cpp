@@ -68,26 +68,30 @@ bool SubPath::Equals(const PathReference *other_p) const {
 	return true;
 }
 void SubPath::Serialize(Serializer &serializer) const {
-	serializer.WriteProperty(100, "path_mode", uint8_t(path_mode));
-	serializer.WriteProperty(101, "path_list", path_list);
-	serializer.WriteProperty(102, "single_bind", single_bind);
-	serializer.WriteProperty(103, "lower", lower);
-	serializer.WriteProperty(104, "upper", upper);
-	serializer.WriteProperty(105, "where_clause", where_clause);
-	serializer.WriteProperty(106, "path_variable", path_variable);
+	PathReference::Serialize(serializer);
+	serializer.WriteProperty(200, "path_mode", uint8_t(path_mode));
+	serializer.WriteProperty(201, "path_list", path_list);
+	serializer.WriteProperty(202, "single_bind", single_bind);
+	serializer.WriteProperty(203, "lower", lower);
+	serializer.WriteProperty(204, "upper", upper);
+	serializer.WriteProperty(205, "where_clause", where_clause);
+	serializer.WriteProperty(206, "path_variable", path_variable);
 }
 
 unique_ptr<PathReference> SubPath::Deserialize(Deserializer &deserializer) {
 	auto result = make_uniq<SubPath>(PGQPathReferenceType::SUBPATH);
 	uint8_t path_mode = uint8_t(PGQPathMode::NONE);
-	deserializer.ReadProperty(100, "path_mode", path_mode);
+	deserializer.ReadProperty(200, "path_mode", path_mode);
+	if (path_mode > uint8_t(PGQPathMode::ACYCLIC)) {
+		throw SerializationException("Invalid PGQ path mode: %u", unsigned(path_mode));
+	}
 	result->path_mode = PGQPathMode(path_mode);
-	deserializer.ReadProperty(101, "path_list", result->path_list);
-	deserializer.ReadProperty(102, "single_bind", result->single_bind);
-	deserializer.ReadProperty(103, "lower", result->lower);
-	deserializer.ReadProperty(104, "upper", result->upper);
-	deserializer.ReadProperty(105, "where_clause", result->where_clause);
-	deserializer.ReadProperty(106, "path_variable", result->path_variable);
+	deserializer.ReadProperty(201, "path_list", result->path_list);
+	deserializer.ReadProperty(202, "single_bind", result->single_bind);
+	deserializer.ReadProperty(203, "lower", result->lower);
+	deserializer.ReadProperty(204, "upper", result->upper);
+	deserializer.ReadProperty(205, "where_clause", result->where_clause);
+	deserializer.ReadProperty(206, "path_variable", result->path_variable);
 	return std::move(result);
 }
 string SubPath::ToString() const {

@@ -1,3 +1,6 @@
+#include "duckpgq/compat/function_access.hpp"
+#include "duckpgq/compat/parsed_expression_access.hpp"
+#include "duckpgq/compat/function_access.hpp"
 #include <duckpgq_extension.hpp>
 #include "duckpgq/core/functions/table/match.hpp"
 
@@ -41,32 +44,69 @@ static Identifier PGQIdentifier(const Identifier &value) {
 }
 
 static void SetExpressionAlias(ParsedExpression &expr, const string &alias) {
+#if __has_include("duckdb/common/identifier.hpp")
 	expr.SetAlias(PGQIdentifier(alias));
+#else
+	expr.SetAlias(alias);
+#endif
 }
 
+// CTE map keys are Identifiers in the fork and plain strings in canonical DuckDB 1.5.5.
+#if __has_include("duckdb/common/identifier.hpp")
+static Identifier PGQCteKey(const string &name) {
+	return Identifier(name);
+}
+#else
+static string PGQCteKey(const string &name) {
+	return name;
+}
+#endif
+
 static unique_ptr<ColumnRefExpression> PGQColumnRef(const string &column_name, const string &table_name) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return make_uniq<ColumnRefExpression>(PGQIdentifier(column_name), PGQIdentifier(table_name));
+#else
+	return make_uniq<ColumnRefExpression>(column_name, table_name);
+#endif
 }
 
 static unique_ptr<ColumnRefExpression> PGQColumnRef(const Identifier &column_name, const string &table_name) {
+#if __has_include("duckdb/common/identifier.hpp")
 	return make_uniq<ColumnRefExpression>(column_name, PGQIdentifier(table_name));
+#else
+	return make_uniq<ColumnRefExpression>(column_name.GetIdentifierName(), table_name);
+#endif
 }
 
 static unique_ptr<ColumnRefExpression> PGQColumnRef(const string &table_name, const string &column_name,
                                                     bool qualified) {
 	(void)qualified;
+#if __has_include("duckdb/common/identifier.hpp")
 	vector<Identifier> column_names;
 	column_names.push_back(PGQIdentifier(table_name));
 	column_names.push_back(PGQIdentifier(column_name));
 	return make_uniq<ColumnRefExpression>(std::move(column_names));
+#else
+	vector<string> column_names;
+	column_names.push_back(table_name);
+	column_names.push_back(column_name);
+	return make_uniq<ColumnRefExpression>(std::move(column_names));
+#endif
 }
 
 static unique_ptr<ColumnRefExpression> PGQColumnRef(const string &table_name, const Identifier &column_name,
                                                     bool qualified) {
+#if __has_include("duckdb/common/identifier.hpp")
 	vector<Identifier> column_names;
 	column_names.push_back(PGQIdentifier(table_name));
 	column_names.push_back(column_name);
 	return make_uniq<ColumnRefExpression>(std::move(column_names));
+#else
+	vector<string> column_names;
+	column_names.push_back(table_name);
+	column_names.push_back(column_name.GetIdentifierName());
+	return make_uniq<ColumnRefExpression>(std::move(column_names));
+#endif
 }
 
 static string DuckPGQSQLCountTable(const PropertyGraphTable &table, const string &table_alias,
@@ -134,37 +174,37 @@ static void PGQNormalizeGraphElementRefs(unique_ptr<ParsedExpression> &expressio
 	switch (expression->GetExpressionClass()) {
 	case ExpressionClass::OPERATOR: {
 		auto &op = expression->Cast<OperatorExpression>();
-		for (auto &child : op.GetChildrenMutable()) {
+		for (auto &child : duckpgq_compat::OperatorChildren(op)) {
 			PGQNormalizeGraphElementRefs(child, alias_map);
 		}
 		break;
 	}
 	case ExpressionClass::COMPARISON: {
 		auto &comparison = expression->Cast<ComparisonExpression>();
-		PGQNormalizeGraphElementRefs(comparison.LeftMutable(), alias_map);
-		PGQNormalizeGraphElementRefs(comparison.RightMutable(), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::ComparisonLeft(comparison), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::ComparisonRight(comparison), alias_map);
 		break;
 	}
 	case ExpressionClass::CONJUNCTION: {
 		auto &conjunction = expression->Cast<ConjunctionExpression>();
-		for (auto &child : conjunction.GetChildrenMutable()) {
+		for (auto &child : duckpgq_compat::ConjunctionChildren(conjunction)) {
 			PGQNormalizeGraphElementRefs(child, alias_map);
 		}
 		break;
 	}
 	case ExpressionClass::FUNCTION: {
 		auto &function = expression->Cast<FunctionExpression>();
-		for (auto &argument : function.GetArgumentsMutable()) {
-			PGQNormalizeGraphElementRefs(argument.GetExpressionMutable(), alias_map);
+		for (auto &argument : duckpgq_compat::Arguments(function)) {
+			PGQNormalizeGraphElementRefs(duckpgq_compat::Expression(argument), alias_map);
 		}
-		PGQNormalizeGraphElementRefs(function.FilterMutable(), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::FunctionFilter(function), alias_map);
 		break;
 	}
 	case ExpressionClass::BETWEEN: {
 		auto &between = expression->Cast<BetweenExpression>();
-		PGQNormalizeGraphElementRefs(between.InputMutable(), alias_map);
-		PGQNormalizeGraphElementRefs(between.LowerBoundMutable(), alias_map);
-		PGQNormalizeGraphElementRefs(between.UpperBoundMutable(), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::BetweenInput(between), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::BetweenLowerBound(between), alias_map);
+		PGQNormalizeGraphElementRefs(duckpgq_compat::BetweenUpperBound(between), alias_map);
 		break;
 	}
 	default:
@@ -181,20 +221,21 @@ static bool PGQNormalizeStructExtract(unique_ptr<ParsedExpression> &expression,
 	if (op.GetExpressionType() != ExpressionType::STRUCT_EXTRACT) {
 		return false;
 	}
-	auto &children = op.GetChildrenMutable();
+	auto &children = duckpgq_compat::OperatorChildren(op);
 	if (children.size() != 2 || children[0]->GetExpressionClass() != ExpressionClass::COLUMN_REF ||
 	    children[1]->GetExpressionClass() != ExpressionClass::CONSTANT) {
 		return false;
 	}
 	auto &alias_ref = children[0]->Cast<ColumnRefExpression>();
-	if (alias_ref.ColumnNames().size() != 1) {
+	auto alias_names = duckpgq_compat::ColumnRefNames(alias_ref);
+	if (alias_names.size() != 1) {
 		return false;
 	}
-	auto alias = alias_ref.GetColumnName().GetIdentifierName();
+	auto alias = alias_names[0];
 	if (alias_map.find(alias) == alias_map.end()) {
 		return false;
 	}
-	auto &field = children[1]->Cast<ConstantExpression>().GetValue();
+	auto &field = duckpgq_compat::ConstantValue(children[1]->Cast<ConstantExpression>());
 	expression = PGQColumnRef(alias, field.GetValue<string>(), true);
 	return true;
 }
@@ -542,7 +583,11 @@ PGQMatchFunction::GenerateShortestPathCTE(CreatePropertyGraphInfo &pg_table, Sub
 	auto &select_node = select_statement->node->Cast<SelectNode>();
 	select_node.where_clause = CreateWhereClause(path_finding_conditions);
 	auto cte_info = make_uniq<CommonTableExpressionInfo>();
+#if __has_include("duckdb/common/identifier.hpp")
 	cte_info->query_node = std::move(select_statement->node);
+#else
+	cte_info->query = std::move(select_statement);
+#endif
 	return cte_info;
 }
 
@@ -589,14 +634,14 @@ unique_ptr<ParsedExpression> PGQMatchFunction::CreatePathFindingFunction(
 				if (next_vertex_subpath) {
 					path_finding_conditions.push_back(std::move(next_vertex_subpath->where_clause));
 				}
-				if (final_select_node->cte_map.map.find(Identifier("cte1")) == final_select_node->cte_map.map.end()) {
+				if (final_select_node->cte_map.map.find(PGQCteKey("cte1")) == final_select_node->cte_map.map.end()) {
 					edge_element = reinterpret_cast<PathElement *>(edge_subpath->path_list[0].get());
 					if (edge_element->match_type == PGQMatchType::MATCH_EDGE_RIGHT) {
-						final_select_node->cte_map.map[Identifier("cte1")] = CreateDirectedCSRCTE(
+						final_select_node->cte_map.map[PGQCteKey("cte1")] = CreateDirectedCSRCTE(
 						    FindGraphTable(edge_element->label, pg_table), previous_vertex_element->variable_binding,
 						    edge_element->variable_binding, next_vertex_element->variable_binding);
 					} else if (edge_element->match_type == PGQMatchType::MATCH_EDGE_ANY) {
-						final_select_node->cte_map.map[Identifier("cte1")] =
+						final_select_node->cte_map.map[PGQCteKey("cte1")] =
 						    CreateUndirectedCSRCTE(FindGraphTable(edge_element->label, pg_table), final_select_node);
 					} else {
 						throw NotImplementedException("Cannot do shortest path for edge type %s",
@@ -606,9 +651,9 @@ unique_ptr<ParsedExpression> PGQMatchFunction::CreatePathFindingFunction(
 					}
 				}
 				string shortest_path_cte_name = "shortest_path_cte";
-				if (final_select_node->cte_map.map.find(PGQIdentifier(shortest_path_cte_name)) ==
+				if (final_select_node->cte_map.map.find(PGQCteKey(shortest_path_cte_name)) ==
 				    final_select_node->cte_map.map.end()) {
-					final_select_node->cte_map.map[PGQIdentifier(shortest_path_cte_name)] = GenerateShortestPathCTE(
+					final_select_node->cte_map.map[PGQCteKey(shortest_path_cte_name)] = GenerateShortestPathCTE(
 					    pg_table, edge_subpath, previous_vertex_element, next_vertex_element, path_finding_conditions);
 					PGQAppendCrossJoin(final_select_node->from_table,
 					                   DuckPGQSQL::ParseFromTableRef(shortest_path_cte_name));
@@ -765,21 +810,25 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 		if (parsed_ref == nullptr) {
 			continue;
 		}
-		if (parsed_ref->GetArgumentsMutable().empty()) {
+		if (duckpgq_compat::Arguments(*parsed_ref).empty()) {
 			continue;
 		}
 		auto column_ref =
-		    dynamic_cast<ColumnRefExpression *>(parsed_ref->GetArgumentsMutable()[0].GetExpressionMutable().get());
+		    dynamic_cast<ColumnRefExpression *>(duckpgq_compat::Expression(duckpgq_compat::Arguments(*parsed_ref)[0]).get());
 		if (column_ref == nullptr) {
 			continue;
 		}
 
-		if (column_ref->ColumnNames()[0] != subpath.path_variable) {
+		if (duckpgq_compat::ColumnRefNames(*column_ref)[0] != subpath.path_variable) {
 			continue;
 		}
 		// Trying to check parsed_ref->alias directly leads to a segfault
+#if __has_include("duckdb/common/identifier.hpp")
 		string column_alias = parsed_ref->GetAlias().GetIdentifierName();
-		if (parsed_ref->FunctionName() == "element_id") {
+#else
+		string column_alias = parsed_ref->GetAlias();
+#endif
+		if (duckpgq_compat::FunctionName(*parsed_ref) == "element_id") {
 			// Check subpath name matches the column referenced in the function -->
 			// element_id(named_subpath)
 			auto shortest_path_function = CreatePathFindingFunction(subpath.path_list, pg_table, subpath.path_variable,
@@ -793,7 +842,7 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 			original_ref.column_list.erase(original_ref.column_list.begin() + static_cast<int64_t>(idx_i));
 			original_ref.column_list.insert(original_ref.column_list.begin() + static_cast<int64_t>(idx_i),
 			                                std::move(shortest_path_function));
-		} else if (parsed_ref->FunctionName() == "path_length") {
+		} else if (duckpgq_compat::FunctionName(*parsed_ref) == "path_length") {
 			auto shortest_path_function = CreatePathFindingFunction(subpath.path_list, pg_table, subpath.path_variable,
 			                                                        final_select_node, conditions);
 			auto path_len_children = vector<unique_ptr<ParsedExpression>>();
@@ -809,13 +858,13 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 			original_ref.column_list.erase(original_ref.column_list.begin() + static_cast<int64_t>(idx_i));
 			original_ref.column_list.insert(original_ref.column_list.begin() + static_cast<int64_t>(idx_i),
 			                                std::move(path_length_function));
-		} else if (parsed_ref->FunctionName() == "vertices" || parsed_ref->FunctionName() == "edges") {
+		} else if (duckpgq_compat::FunctionName(*parsed_ref) == "vertices" || duckpgq_compat::FunctionName(*parsed_ref) == "edges") {
 			auto list_slice_children = vector<unique_ptr<ParsedExpression>>();
 			auto shortest_path_function = CreatePathFindingFunction(subpath.path_list, pg_table, subpath.path_variable,
 			                                                        final_select_node, conditions);
 			list_slice_children.push_back(std::move(shortest_path_function));
 
-			if (parsed_ref->FunctionName() == "vertices") {
+			if (duckpgq_compat::FunctionName(*parsed_ref) == "vertices") {
 				list_slice_children.push_back(make_uniq<ConstantExpression>(Value::INTEGER(1)));
 			} else {
 				list_slice_children.push_back(make_uniq<ConstantExpression>(Value::INTEGER(2)));
@@ -826,7 +875,7 @@ void PGQMatchFunction::CheckNamedSubpath(SubPath &subpath, MatchExpression &orig
 			list_slice_children.push_back(std::move(slice_end));
 			list_slice_children.push_back(std::move(slice_step));
 			auto list_slice = make_uniq<FunctionExpression>("list_slice", std::move(list_slice_children));
-			if (parsed_ref->FunctionName() == "vertices") {
+			if (duckpgq_compat::FunctionName(*parsed_ref) == "vertices") {
 				SetExpressionAlias(*list_slice,
 				                   column_alias.empty() ? "vertices(" + subpath.path_variable + ")" : column_alias);
 			} else {
@@ -989,7 +1038,7 @@ void PGQMatchFunction::CheckColumnBinding(
 		if (column_ref == nullptr) {
 			continue;
 		}
-		auto column_names = IdentifiersToStrings(column_ref->ColumnNames());
+		auto column_names = duckpgq_compat::ColumnRefNames(*column_ref);
 		// 'shortest_path_cte' is a special table populated by pgq.
 		if (column_names[0] == "shortest_path_cte") {
 			continue;
@@ -1067,9 +1116,9 @@ unique_ptr<TableRef> PGQMatchFunction::MatchBindReplace(ClientContext &context, 
 		// Handle ColumnRefExpression.
 		auto *column_ref = dynamic_cast<ColumnRefExpression *>(expression.get());
 		if (column_ref != nullptr) {
-			auto &column_names = column_ref->ColumnNames();
-			if (named_subpaths.count(column_names[0].GetIdentifierName()) && column_names.size() == 1) {
-				final_column_list.emplace_back(make_uniq<ColumnRefExpression>("path", column_names[0]));
+			auto column_names = duckpgq_compat::ColumnRefNames(*column_ref);
+			if (named_subpaths.count(column_names[0]) && column_names.size() == 1) {
+				final_column_list.emplace_back(PGQColumnRef(string("path"), column_names[0]));
 			} else {
 				final_column_list.push_back(std::move(expression));
 			}
@@ -1079,18 +1128,18 @@ unique_ptr<TableRef> PGQMatchFunction::MatchBindReplace(ClientContext &context, 
 		// Handle FunctionExpression.
 		auto *function_ref = dynamic_cast<FunctionExpression *>(expression.get());
 		if (function_ref != nullptr) {
-			if (function_ref->FunctionName() == "path_length") {
-				if (function_ref->GetArgumentsMutable().empty()) {
+			if (duckpgq_compat::FunctionName(*function_ref) == "path_length") {
+				if (duckpgq_compat::Arguments(*function_ref).empty()) {
 					continue;
 				}
 				column_ref = dynamic_cast<ColumnRefExpression *>(
-				    function_ref->GetArgumentsMutable()[0].GetExpressionMutable().get());
+				    duckpgq_compat::Expression(duckpgq_compat::Arguments(*function_ref)[0]).get());
 				if (column_ref == nullptr) {
 					continue;
 				}
-				auto &column_names = column_ref->ColumnNames();
-				if (named_subpaths.count(column_names[0].GetIdentifierName()) && column_names.size() == 1) {
-					auto path_name = column_names[0].GetIdentifierName();
+				auto column_names = duckpgq_compat::ColumnRefNames(*column_ref);
+				if (named_subpaths.count(column_names[0]) && column_names.size() == 1) {
+					auto path_name = column_names[0];
 					final_column_list.emplace_back(DuckPGQSQL::ParseExpression(
 					    "len(" + DuckPGQSQL::Column(string("path"), path_name) + ") // 2", "path_length_" + path_name,
 					    "DuckPGQ MATCH path_length projection"));
@@ -1105,9 +1154,9 @@ unique_ptr<TableRef> PGQMatchFunction::MatchBindReplace(ClientContext &context, 
 		// Handle StarExpression.
 		auto *star_expression = dynamic_cast<StarExpression *>(expression.get());
 		if (star_expression != nullptr) {
-			auto &relation_name = star_expression->RelationName();
+			auto relation_name = duckpgq_compat::StarRelationName(*star_expression);
 			if (!relation_name.empty()) {
-				auto tbl_iter = alias_to_vertex_and_edge_tables.find(relation_name.GetIdentifierName());
+				auto tbl_iter = alias_to_vertex_and_edge_tables.find(relation_name);
 				if (tbl_iter == alias_to_vertex_and_edge_tables.end()) {
 					continue;
 				}
@@ -1115,7 +1164,7 @@ unique_ptr<TableRef> PGQMatchFunction::MatchBindReplace(ClientContext &context, 
 
 			auto selected_col_exprs = relation_name.empty() ? GetColRefExprFromPg(alias_to_vertex_and_edge_tables)
 			                                                : GetColRefExprFromPg(alias_to_vertex_and_edge_tables,
-			                                                                      relation_name.GetIdentifierName());
+			                                                                      relation_name);
 
 			// Fallback to star expression if cannot figure out the columns to query.
 			if (selected_col_exprs.empty()) {
@@ -1139,7 +1188,11 @@ unique_ptr<TableRef> PGQMatchFunction::MatchBindReplace(ClientContext &context, 
 
 	auto subquery = make_uniq<SelectStatement>();
 	subquery->node = std::move(final_select_node);
+#if __has_include("duckdb/common/identifier.hpp")
 	auto result = make_uniq<SubqueryRef>(std::move(subquery), PGQIdentifier(ref->alias));
+#else
+	auto result = make_uniq<SubqueryRef>(std::move(subquery), ref->alias);
+#endif
 	return std::move(result);
 }
 

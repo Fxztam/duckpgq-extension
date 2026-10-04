@@ -1,3 +1,4 @@
+#include "duckpgq/compat/scalar_bind.hpp"
 //===----------------------------------------------------------------------===//
 //                         DuckPGQ
 //
@@ -26,7 +27,7 @@ struct PageRankFunctionData final : FunctionData {
 
 	PageRankFunctionData(ClientContext &context, int32_t csr_id);
 	PageRankFunctionData(ClientContext &context, int32_t csr_id, const vector<int64_t> &componentId);
-	static unique_ptr<FunctionData> PageRankBind(BindScalarFunctionInput &input);
+	static unique_ptr<FunctionData> PageRankBind(duckpgq_compat::ScalarBindInput &input);
 
 	unique_ptr<FunctionData> Copy() const override;
 	bool Equals(const FunctionData &other_p) const override;

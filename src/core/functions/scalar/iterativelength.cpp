@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/parser/parsed_data/create_scalar_function_info.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
@@ -33,7 +35,7 @@ static bool IterativeLength(int64_t v_size, int64_t *v, vector<int64_t> &e, vect
 
 static void IterativeLengthFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<IterativeLengthFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<IterativeLengthFunctionData>();
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
 	D_ASSERT(duckpgq_state->csr_list[info.csr_id]);
@@ -58,16 +60,16 @@ static void IterativeLengthFunction(DataChunk &args, ExpressionState &state, Vec
 	auto &dst = args.data[3];
 	UnifiedVectorFormat vdata_src;
 	UnifiedVectorFormat vdata_dst;
-	src.ToUnifiedFormat(vdata_src);
-	dst.ToUnifiedFormat(vdata_dst);
+	duckpgq_compat::ToUnified(src, args.size(), vdata_src);
+	duckpgq_compat::ToUnified(dst, args.size(), vdata_dst);
 	auto src_data = reinterpret_cast<const int64_t *>(vdata_src.data);
 	auto dst_data = reinterpret_cast<const int64_t *>(vdata_dst.data);
 
-	ValidityMask &result_validity = FlatVector::ValidityMutable(result);
+	ValidityMask &result_validity = duckpgq_compat::MutableValidity(result);
 
 	// create result vector
 	result.SetVectorType(VectorType::FLAT_VECTOR);
-	auto result_data = FlatVector::GetDataMutable<int64_t>(result);
+	auto result_data = duckpgq_compat::MutableData<int64_t>(result);
 
 	// create temp SIMD arrays
 	vector<std::bitset<LANE_LIMIT>> seen(v_size);
@@ -96,7 +98,8 @@ static void IterativeLengthFunction(DataChunk &args, ExpressionState &state, Vec
 				int64_t search_num = started_searches++;
 				auto src_pos = vdata_src.sel->get_index(search_num);
 				auto dst_pos = vdata_dst.sel->get_index(search_num);
-				if (!vdata_src.validity.RowIsValid(src_pos)) {
+				if (!vdata_src.validity.RowIsValid(src_pos) || !vdata_dst.validity.RowIsValid(dst_pos)) {
+					// a NULL source or destination has no path (the destination used to be read as its raw value)
 					result_validity.SetInvalid(search_num);
 					result_data[search_num] = -1; /* no path */
 				} else if (src_data[src_pos] == dst_data[dst_pos]) {
@@ -148,7 +151,7 @@ static void IterativeLengthFunction(DataChunk &args, ExpressionState &state, Vec
 void CoreScalarFunctions::RegisterIterativeLengthScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction(
 	    "iterativelength", {LogicalType::INTEGER, LogicalType::BIGINT, LogicalType::BIGINT, LogicalType::BIGINT},
-	    LogicalType::BIGINT, IterativeLengthFunction, IterativeLengthFunctionData::IterativeLengthBind));
+	    LogicalType::BIGINT, IterativeLengthFunction, duckpgq_compat::AdaptBind<IterativeLengthFunctionData::IterativeLengthBind>()));
 }
 
 } // namespace duckdb

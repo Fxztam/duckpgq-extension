@@ -1,3 +1,5 @@
+#include "duckpgq/compat/scalar_bind.hpp"
+#include "duckpgq/compat/vector_access.hpp"
 #include "duckdb/main/client_data.hpp"
 #include "duckdb/planner/expression/bound_function_expression.hpp"
 #include "duckpgq/common.hpp"
@@ -9,7 +11,7 @@ namespace duckdb {
 
 static void DeleteCsrFunction(DataChunk &args, ExpressionState &state, Vector &result) {
 	auto &func_expr = state.expr.Cast<BoundFunctionExpression>();
-	auto &info = func_expr.BindInfo()->Cast<CSRFunctionData>();
+	auto &info = duckpgq_compat::BindInfo(func_expr)->Cast<CSRFunctionData>();
 
 	auto duckpgq_state = GetDuckPGQState(info.context);
 
@@ -24,7 +26,7 @@ static void DeleteCsrFunction(DataChunk &args, ExpressionState &state, Vector &r
 //------------------------------------------------------------------------------
 void CoreScalarFunctions::RegisterCSRDeletionScalarFunction(ExtensionLoader &loader) {
 	loader.RegisterFunction(ScalarFunction("delete_csr", {LogicalType::INTEGER}, LogicalType::BOOLEAN,
-	                                       DeleteCsrFunction, CSRFunctionData::CSRBind));
+	                                       DeleteCsrFunction, duckpgq_compat::AdaptBind<CSRFunctionData::CSRBind>()));
 }
 
 } // namespace duckdb

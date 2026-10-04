@@ -31,7 +31,7 @@ unique_ptr<PathReference> PathReference::Deserialize(Deserializer &deserializer)
 		result = SubPath::Deserialize(deserializer);
 		break;
 	default:
-		throw InternalException("Unknown path reference type in deserializer.");
+		throw SerializationException("Unknown PGQ path reference type: %u", unsigned(path_reference_type_value));
 	}
 	result->path_reference_type = path_reference_type;
 	return result;
